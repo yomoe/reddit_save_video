@@ -2,11 +2,11 @@ import logging
 
 import requests
 from aiogram import Dispatcher, types
-from aiogram.types import (
-    KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
-)
+from aiogram.types import CallbackQuery
 from bs4 import BeautifulSoup
 from pyhelpers.ops import is_downloadable
+
+from tgbot.keyboards.inline import create_inline_kb
 
 REDDIT_SAVE_SD_URL = 'https://rapidsave.com/sd.php?id='
 REDDIT_SAVE_HD_URL = 'https://rapidsave.com/info?url='
@@ -62,31 +62,31 @@ async def bot_get_links(message: types.Message) -> None:
         await message.answer('Видео не найдено')
     else:
         logger.debug('Ссылки есть, отправляем сообщение с кнопками')
+        keyboard = create_inline_kb(2, **links)
         users[message.from_user.id] = {'links': links, }
-        keyboard: ReplyKeyboardMarkup = ReplyKeyboardMarkup(
-            resize_keyboard=True, one_time_keyboard=True)
-        keyboard.add(*[KeyboardButton(i) for i in links.keys()])
         await message.answer(
-            'В каком качестве хочешь получить видос?', reply_markup=keyboard)
+            text='В каком качестве хочешь получить видос?',
+            reply_markup=keyboard)
 
 
-async def bot_send_video(message: types.Message) -> None:
+async def bot_send_video(callback: CallbackQuery) -> None:
     """Отправляем видео"""
-    keyboard = ReplyKeyboardRemove()
-    if is_downloadable(users[message.from_user.id]['links'][message.text]):
+    await callback.message.edit_text(
+        text='Я качаю видео, пожалуйста подожди...'
+    )
+    if is_downloadable(users[callback.from_user.id]['links'][callback.data]):
         response = requests.get(
-            users[message.from_user.id]['links'][message.text])
-        logger.debug("Отправляю сообщение о загрузке")
-        msg = await message.answer(
-            'Я качаю видео, пожалуйста подожди...', reply_markup=keyboard)
+            users[callback.from_user.id]['links'][callback.data])
         logger.info(
-            f'Отправляю видео для пользователя {message.from_user.full_name}, '
-            f'id {message.from_user.id}'
+            f'Отправляю видео для пользователя {callback.from_user.full_name}, '
+            f'id {callback.from_user.id}'
         )
-        await message.answer_video(
+        await callback.message.edit_text(
+            text='Отправляю видео...')
+        await callback.message.answer_video(
             response.content)
         logger.debug("Удаляю сообщение о загрузке")
-        await msg.delete()
+        await callback.message.delete()
 
 
 async def bot_send_video_group(message: types.Message) -> None:
@@ -118,8 +118,8 @@ def register_get_links(dp: Dispatcher) -> None:
     dp.register_message_handler(
         bot_get_links, text_startswith=['https://www.reddit.com/r/'],
         chat_type=types.ChatType.PRIVATE)
-    dp.register_message_handler(
-        bot_send_video, text_endswith=['(mp4)'],
+    dp.register_callback_query_handler(
+        bot_send_video, text_endswith='(mp4)',
         chat_type=types.ChatType.PRIVATE)
     dp.register_message_handler(
         bot_send_video_group, text_startswith=['https://www.reddit.com/r/'])
