@@ -90,6 +90,7 @@ async def bot_send_video(message: types.Message) -> None:
 
 
 async def bot_send_video_group(message: types.Message) -> None:
+    """Отправляем видео в группу или канал предпоследнего качества"""
     links = parse_sd_url(message.text)
     if not links:
         logger.debug('Словарь ссылок пустой, отправляем сообщение об ошибке')
