@@ -1,10 +1,13 @@
 import logging
+from urllib import request
 
 import requests
 from aiogram import Dispatcher, types
 from aiogram.types import CallbackQuery
 from bs4 import BeautifulSoup
+from fake_useragent import UserAgent
 from pyhelpers.ops import is_downloadable
+from ..lexicon import lexicon_en as en
 
 from tgbot.keyboards.inline import create_inline_kb
 
@@ -15,16 +18,24 @@ logger = logging.getLogger(__name__)
 
 users: dict = {}
 
+ua = UserAgent()
+headers = {
+    'user-agent': ua.chrome,
+}
+
 
 def parse_hd_url(url: str) -> str:
-    """Ссылка на видео в максимальном качестве"""
+    """Link to the HD video"""
     html = BeautifulSoup(
-        requests.get(REDDIT_SAVE_HD_URL + url).text, 'html.parser')
+        requests.get(
+            REDDIT_SAVE_HD_URL + url,
+            headers=headers
+        ).text, 'html.parser')
     return html.find_all('a', class_='downloadbutton')[0].get('href')
 
 
 def parse_sd_url(url: str) -> dict:
-    """Формируем словарь со ссылками на видео в разных качествах"""
+    """Find the SD video and return a dictionary with the links to the video"""
     results = {}
     logger.debug(f'Получаем id ссылки {url} на sd видео')
     id_url = REDDIT_SAVE_SD_URL + url.split('/comments/')[1].split('/')[0]
@@ -32,7 +43,11 @@ def parse_sd_url(url: str) -> dict:
         f'Получилась ссылка {id_url} для парсинга. '
         f'Получаем страницу и отдаем ее'
     )
-    html = BeautifulSoup(requests.get(id_url).text, 'html.parser')
+    html = BeautifulSoup(
+        requests.get(
+            id_url,
+            headers=headers
+        ).text, 'html.parser')
     if html.find_all(
             'div', class_='col-md-8 col-md-offset-2 alert alert-danger'):
         logger.debug('Видео не найдено, возвращаем пустой словарь')
@@ -40,53 +55,73 @@ def parse_sd_url(url: str) -> dict:
     for row in html.find_all('tr'):
         logger.debug('Получаем ссылки на видео в sd качестве')
         aux = row.find_all('td')
-        if len(aux) == 2:
-            results[aux[0].string] = aux[1].find('a').get('href')
+        if len(aux) == 2 and not aux[0].string.startswith('2'):
+            req = request.Request(
+                aux[1].find('a').get('href'),
+                headers=headers
+            )
+            f = request.urlopen(req)
+            size = aux[0].string + ' ' + str(
+                round(int(f.headers['Content-Length']) / 1024 / 1024, 1)
+            ) + 'mb'
+            results[size] = aux[1].find('a').get('href')
             logger.debug(
                 f'Записываем в словарь ключ {[aux[0].string]} и ссылку '
-                f'{results[aux[0].string]}'
+                f'{results[size]}'
             )
-    results['Max (mp4)'] = parse_hd_url(url)
+    max_url = parse_hd_url(url)
+    req = request.Request(
+        max_url,
+        headers=headers
+    )
+    f = request.urlopen(req)
+    size = 'Max (mp4) ' + str(
+        round(int(f.headers['Content-Length']) / 1024 / 1024, 1)
+    ) + 'mb'
+    results[size] = max_url
     logger.debug(
-        'Записываем в словарь ключ [\'Max (mp4)\'] и ссылку '
-        f'{results["Max (mp4)"]}'
+        'Записываем в словарь ключ \'Max (mp4)\' и ссылку '
+        f'{results[size]}'
     )
     return results
 
 
 async def bot_get_links(message: types.Message) -> None:
-    """Получаем ссылки на видео в разных качествах и предлагаем выбрать"""
+    """Send a message with buttons to download the video"""
+    msg = await message.answer(en.GET_LINKS_FOR_VIDEO)
+    logger.info(message.from_user.language_code)
     links = parse_sd_url(message.text)
     if not links:
         logger.debug('Словарь ссылок пустой, отправляем сообщение об ошибке')
-        await message.answer('Видео не найдено')
+        await msg.edit_text(en.VIDEO_NOT_FOUND)
     else:
         logger.debug('Ссылки есть, отправляем сообщение с кнопками')
         keyboard = create_inline_kb(2, **links)
         users[message.from_user.id] = {'links': links, }
-        await message.answer(
-            text='В каком качестве хочешь получить видос?',
+        await msg.edit_text(
+            text=en.VIDEO_QUALITY,
             reply_markup=keyboard)
 
 
 async def bot_send_video(callback: CallbackQuery) -> None:
     """Отправляем видео"""
     await callback.message.edit_text(
-        text='Я качаю видео, пожалуйста подожди...'
+        text=en.DOWNLOADING_VIDEO
     )
-    if is_downloadable(users[callback.from_user.id]['links'][callback.data]):
-        response = requests.get(
-            users[callback.from_user.id]['links'][callback.data])
-        logger.info(
-            f'Отправляю видео для пользователя {callback.from_user.full_name}, '
-            f'id {callback.from_user.id}'
-        )
-        await callback.message.edit_text(
-            text='Отправляю видео...')
-        await callback.message.answer_video(
-            response.content)
-        logger.debug("Удаляю сообщение о загрузке")
-        await callback.message.delete()
+    response = requests.get(
+        users[callback.from_user.id]['links'][callback.data],
+        headers=headers
+    )
+    logger.info(
+        f'Отправляю видео для пользователя {callback.from_user.full_name}, '
+        f'id {callback.from_user.id}'
+    )
+    await callback.message.edit_text(
+        text=en.SENDING_VIDEO)
+    await callback.message.answer_video(
+        response.content)
+    logger.debug("Удаляю сообщение о загрузке")
+    await callback.message.delete()
 
 
 async def bot_send_video_group(message: types.Message) -> None:
@@ -94,24 +129,32 @@ async def bot_send_video_group(message: types.Message) -> None:
     links = parse_sd_url(message.text)
     if not links:
         logger.debug('Словарь ссылок пустой, отправляем сообщение об ошибке')
-        await message.answer('Видео не найдено')
+        await message.answer(en.VIDEO_NOT_FOUND)
     else:
         users[message.from_user.id] = {'links': links, }
-    if is_downloadable(
-            list(users[message.from_user.id]['links'].values())[-2]):
-        logger.info(
-            f'Отправляю видео для чата {message.chat.title}, '
-            f'id {message.chat.id}'
-        )
-        response = requests.get(
-            list(users[message.from_user.id]['links'].values())[-2]
-        )
-        msg = await message.answer(
-            'Я качаю видео, пожалуйста подожди...')
-        await message.answer_video(
-            response.content)
-        logger.debug("Удаляю сообщение о загрузке")
-        await msg.delete()
+    logger.info(
+        f'Отправляю видео для чата {message.chat.title}, '
+        f'id {message.chat.id}'
+    )
+    response = requests.get(
+        list(users[message.from_user.id]['links'].values())[-2],
+        headers=headers
+    )
+    msg = await message.answer(en.DOWNLOADING_VIDEO)
+    await message.answer_video(
+        response.content)
+    logger.debug("Удаляю сообщение о загрузке")
+    await msg.delete()
+
+
+async def bot_send_video_cancel(callback: CallbackQuery) -> None:
+    """Отменяем отправку видео"""
+    logger.debug(
+        f'Пользователь {callback.from_user.full_name}, '
+        f'id {callback.from_user.id} отменил отправку видео'
+    )
+    await callback.message.edit_text(
+        text=en.SEND_VIDEO_CANCEL)
 
 
 def register_get_links(dp: Dispatcher) -> None:
@@ -119,7 +162,10 @@ def register_get_links(dp: Dispatcher) -> None:
         bot_get_links, text_startswith=['https://www.reddit.com/r/'],
         chat_type=types.ChatType.PRIVATE)
     dp.register_callback_query_handler(
-        bot_send_video, text_endswith='(mp4)',
+        bot_send_video, text_endswith='mb',
+        chat_type=types.ChatType.PRIVATE)
+    dp.register_callback_query_handler(
+        bot_send_video_cancel, text_endswith='cancel',
         chat_type=types.ChatType.PRIVATE)
     dp.register_message_handler(
         bot_send_video_group, text_startswith=['https://www.reddit.com/r/'])
