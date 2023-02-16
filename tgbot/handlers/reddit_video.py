@@ -1,103 +1,137 @@
 import logging
+import re
 from urllib import request
+from urllib.parse import urljoin, urlparse
 
 import requests
 from aiogram import Dispatcher, types
 from aiogram.types import CallbackQuery
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
-from pyhelpers.ops import is_downloadable
-from ..lexicon import lexicon_en as en
 
 from tgbot.keyboards.inline import create_inline_kb
-
-REDDIT_SAVE_SD_URL = 'https://rapidsave.com/sd.php?id='
-REDDIT_SAVE_HD_URL = 'https://rapidsave.com/info?url='
+from ..lexicon import lexicon_en as en
 
 logger = logging.getLogger(__name__)
 
 users: dict = {}
 
 ua = UserAgent()
-headers = {
+HEADERS = {
     'user-agent': ua.chrome,
 }
 
 
-def parse_hd_url(url: str) -> str:
-    """Link to the HD video"""
-    html = BeautifulSoup(
-        requests.get(
-            REDDIT_SAVE_HD_URL + url,
-            headers=headers
-        ).text, 'html.parser')
-    return html.find_all('a', class_='downloadbutton')[0].get('href')
-
-
-def parse_sd_url(url: str) -> dict:
-    """Find the SD video and return a dictionary with the links to the video"""
-    results = {}
-    logger.debug(f'Получаем id ссылки {url} на sd видео')
-    id_url = REDDIT_SAVE_SD_URL + url.split('/comments/')[1].split('/')[0]
-    logger.debug(
-        f'Получилась ссылка {id_url} для парсинга. '
-        f'Получаем страницу и отдаем ее'
-    )
-    html = BeautifulSoup(
-        requests.get(
-            id_url,
-            headers=headers
-        ).text, 'html.parser')
-    if html.find_all(
-            'div', class_='col-md-8 col-md-offset-2 alert alert-danger'):
-        logger.debug('Видео не найдено, возвращаем пустой словарь')
-        return results
-    for row in html.find_all('tr'):
-        logger.debug('Получаем ссылки на видео в sd качестве')
-        aux = row.find_all('td')
-        if len(aux) == 2 and not aux[0].string.startswith('2'):
-            req = request.Request(
-                aux[1].find('a').get('href'),
-                headers=headers
-            )
-            f = request.urlopen(req)
-            size = aux[0].string + ' ' + str(
-                round(int(f.headers['Content-Length']) / 1024 / 1024, 1)
-            ) + 'mb'
-            results[size] = aux[1].find('a').get('href')
-            logger.debug(
-                f'Записываем в словарь ключ {[aux[0].string]} и ссылку '
-                f'{results[size]}'
-            )
-    max_url = parse_hd_url(url)
-    req = request.Request(
-        max_url,
-        headers=headers
-    )
+def size_file(url: str) -> str:
+    """Get the size of the file"""
+    logger.debug(f'Try get size file {url}')
+    req = request.Request(url, headers=HEADERS)
     f = request.urlopen(req)
-    size = 'Max (mp4) ' + str(
-        round(int(f.headers['Content-Length']) / 1024 / 1024, 1)
-    ) + 'mb'
-    results[size] = max_url
-    logger.debug(
-        'Записываем в словарь ключ \'Max (mp4)\' и ссылку '
-        f'{results[size]}'
-    )
-    return results
+    size = str(round(int(f.headers['Content-Length']) / 1024 / 1024, 1))
+    logger.debug('File size: ' + size + 'mb')
+    return size
+
+
+def parse_xml(xml: str, url: str, url_clear: str) -> dict:
+    """Find the SD video and return a dictionary with the links to the video"""
+    video_link_sd = {}
+    logger.debug(f'Get xml file {url}')
+    soup = BeautifulSoup(xml, 'xml')
+    list_files = soup.find_all('AdaptationSet')
+    logger.debug('Check audio in file')
+    if len(list_files) > 1:
+        audio = url + list_files[1].find_all('BaseURL')[0].text
+        logger.debug(f'Audio found: {audio}')
+    else:
+        audio = 'false'
+        logger.debug(f'Audio not found: {audio}')
+    video_link_sd['audio'] = audio
+
+    logger.debug('Check video in file')
+    videos = list_files[0].find_all('BaseURL')
+    if len(videos) > 2:
+        for resol in videos:
+            if 'DASH_2' not in resol.text:
+                resol_link = (
+                    'https://sd.redditsave.com/download-sd.php?permalink='
+                    '{permalink}&video_url={video_url}&audio_url='
+                    '{audio_url}'.format(
+                        permalink=url_clear,
+                        video_url=url + resol.text,
+                        audio_url=video_link_sd['audio'])
+                )
+                resol = (resol.text.split('_')[1].split('.')[0]) + 'p'
+                logger.debug(f'{resol} have link {resol_link}')
+                size = size_file(resol_link)
+                video_link_sd[resol + ' ' + size + 'mb'] = resol_link
+    return video_link_sd
+
+
+def url_to_json(url):
+    video_link = {}
+    url = re.search("(?P<url>https?://[^\s]+)", url).group("url")
+    logger.debug('Get only link from message: ' + url)
+    url_clear = urljoin(url, urlparse(url).path)
+    logger.debug('Delete parameters from link: ' + url_clear)
+    url_json = re.sub(r'/$', '.json', url_clear)
+    logger.debug('Change link to json link: ' + url_json)
+    res = requests.get(url_json, headers=HEADERS)
+    logger.debug('Find video in json file')
+    if 'reddit_video' in res.text:
+        res_json = res.json()
+        find_json = res_json[0]['data']['children'][0]['data']
+
+        logger.debug('Get a caption from post')
+        caption = find_json['title']
+
+        logger.debug('Checking crosspost in json')
+        if 'crosspost_parent_list' in res.text:
+            find_json = find_json['crosspost_parent_list'][0]
+
+        logger.debug('Get a link to a file with SD video and audio')
+        dash = requests.get(
+            find_json['secure_media']['reddit_video']['dash_url']).text
+        logger.debug('Get a major link for downloads')
+        url_dl = find_json['url_overridden_by_dest'] + '/'
+        logger.debug('Sending data for parsing')
+        video_link = parse_xml(dash, url_dl, url_clear)
+        logger.debug('Get a max resolution')
+        max_resol = (find_json['secure_media']['reddit_video'][
+            'fallback_url'].split('_')[1].split('.')[0]) + 'p'
+        logger.debug('Get a link to a file with HD video')
+        max_resol_link = (
+            'https://sd.redditsave.com/download.php?permalink='
+            '{permalink}&video_url={video_url}&audio_url={audio_url}'.format(
+                permalink=url_clear,
+                video_url=(
+                    find_json['secure_media']['reddit_video']['fallback_url']
+                ),
+                audio_url=video_link['audio']))
+        video_link.pop('audio', None)
+        size = size_file(max_resol_link)
+        video_link[max_resol + ' ' + size + 'mb'] = max_resol_link
+        video_link['caption'] = caption
+        return video_link
+    else:
+        return video_link
 
 
 async def bot_get_links(message: types.Message) -> None:
     """Send a message with buttons to download the video"""
     msg = await message.answer(en.GET_LINKS_FOR_VIDEO)
-    logger.info(message.from_user.language_code)
-    links = parse_sd_url(message.text)
+    # logger.info(message.from_user.language_code)
+    links = url_to_json(message.text)
     if not links:
         logger.debug('Словарь ссылок пустой, отправляем сообщение об ошибке')
         await msg.edit_text(en.VIDEO_NOT_FOUND)
     else:
         logger.debug('Ссылки есть, отправляем сообщение с кнопками')
+        caption = links.pop('caption', None)
         keyboard = create_inline_kb(2, **links)
-        users[message.from_user.id] = {'links': links, }
+        users[message.from_user.id] = {
+            'caption': caption,
+            'links': links,
+        }
         await msg.edit_text(
             text=en.VIDEO_QUALITY,
             reply_markup=keyboard)
@@ -110,7 +144,7 @@ async def bot_send_video(callback: CallbackQuery) -> None:
     )
     response = requests.get(
         users[callback.from_user.id]['links'][callback.data],
-        headers=headers
+        headers=HEADERS
     )
     logger.info(
         f'Отправляю видео для пользователя {callback.from_user.full_name}, '
@@ -119,30 +153,36 @@ async def bot_send_video(callback: CallbackQuery) -> None:
     await callback.message.edit_text(
         text=en.SENDING_VIDEO)
     await callback.message.answer_video(
-        response.content)
+        video=response.content,
+        caption=users[callback.from_user.id]['caption'],
+    )
     logger.debug("Удаляю сообщение о загрузке")
     await callback.message.delete()
 
 
 async def bot_send_video_group(message: types.Message) -> None:
     """Отправляем видео в группу или канал предпоследнего качества"""
-    links = parse_sd_url(message.text)
+    msg = await message.answer(text=en.GET_LINKS_FOR_VIDEO)
+    links = url_to_json(message.text)
     if not links:
         logger.debug('Словарь ссылок пустой, отправляем сообщение об ошибке')
-        await message.answer(en.VIDEO_NOT_FOUND)
+        await msg.edit_text(en.VIDEO_NOT_FOUND)
     else:
         users[message.from_user.id] = {'links': links, }
+    await msg.edit_text(en.DOWNLOADING_VIDEO)
     logger.info(
         f'Отправляю видео для чата {message.chat.title}, '
         f'id {message.chat.id}'
     )
     response = requests.get(
         list(users[message.from_user.id]['links'].values())[-2],
-        headers=headers
+        headers=HEADERS
     )
-    msg = await message.answer(en.DOWNLOADING_VIDEO)
+    await msg.edit_text(en.SENDING_VIDEO)
     await message.answer_video(
-        response.content)
+        response.content,
+        caption=links.pop('caption', None),
+    )
     logger.debug("Удаляю сообщение о загрузке")
     await msg.delete()
 
