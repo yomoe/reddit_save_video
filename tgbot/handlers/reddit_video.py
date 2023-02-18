@@ -74,7 +74,7 @@ def url_to_json(url):
     url_clear = urljoin(url, urlparse(url).path)
     logger.debug('Delete parameters from link: ' + url_clear)
     url_json = re.sub(r'/$', '.json', url_clear)
-    logger.debug('Change link to json link: ' + url_json)
+    logger.info('Change link to json link: ' + url_json)
     res = requests.get(url_json, headers=HEADERS)
     logger.debug('Find video in json file')
     if 'reddit_video' in res.text:
@@ -135,6 +135,7 @@ async def bot_get_links(message: types.Message) -> None:
         await msg.edit_text(
             text=en.VIDEO_QUALITY,
             reply_markup=keyboard)
+
 
 
 async def bot_send_video(callback: CallbackQuery) -> None:
