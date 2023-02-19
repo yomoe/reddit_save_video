@@ -49,21 +49,20 @@ def parse_xml(xml: str, url: str, url_clear: str) -> dict:
 
     logger.debug('Check video in file')
     videos = list_files[0].find_all('BaseURL')
-    if len(videos) > 2:
-        for resol in videos:
-            if 'DASH_2' not in resol.text:
-                resol_link = (
-                    'https://sd.redditsave.com/download-sd.php?permalink='
-                    '{permalink}&video_url={video_url}&audio_url='
-                    '{audio_url}'.format(
-                        permalink=url_clear,
-                        video_url=url + resol.text,
-                        audio_url=video_link_sd['audio'])
-                )
-                resol = (resol.text.split('_')[1].split('.')[0]) + 'p'
-                logger.debug(f'{resol} have link {resol_link}')
-                size = size_file(resol_link)
-                video_link_sd[resol + ' ' + size + 'mb'] = resol_link
+    for resol in videos:
+        if 'DASH_2' not in resol.text:
+            resol_link = (
+                'https://sd.redditsave.com/download-sd.php?permalink='
+                '{permalink}&video_url={video_url}&audio_url='
+                '{audio_url}'.format(
+                    permalink=url_clear,
+                    video_url=url + resol.text,
+                    audio_url=video_link_sd['audio'])
+            )
+            resol = (resol.text.split('_')[1].split('.')[0]) + 'p'
+            logger.debug(f'{resol} have link {resol_link}')
+            size = size_file(resol_link)
+            video_link_sd[resol + ' ' + size + 'mb'] = resol_link
     return video_link_sd
 
 
