@@ -1,6 +1,6 @@
 # Reddit_Save_Videos_Bot
 
-<img height="30em" src="https://raw.githubusercontent.com/anki-geo/ultimate-geography/a44a569a922e1d241517113e2917736af808eed7/src/media/flags/ug-flag-russia.svg" alt="russian" align = "center"/>
+<img height="30em" src="https://raw.githubusercontent.com/anki-geo/ultimate-geography/a44a569a922e1d241517113e2917736af808eed7/src/media/flags/ug-flag-russia.svg" alt="russian">
 
 Бот для телеграма, который по ссылке из Reddit.com пересылает видео в телеграм
 канал или личку.
@@ -24,13 +24,13 @@
 https://www.reddit.com/r/oddlysatisfying/comments/1125p83/lighter_filmed_1000_times_slower_than_real_life/
 ```
 
-бот преобразует ссылку в json формат:
+Бот преобразует ссылку в json формат:
 
 ```
 https://www.reddit.com/r/oddlysatisfying/comments/1125p83/lighter_filmed_1000_times_slower_than_real_life.json
 ```
 
-из json делает проверку пост содержит видео или нет, если содержит,
+Из json делает проверку пост содержит видео или нет, если содержит,
 то получает ссылку на видео в лучшем качестве из все того же json, так же
 получает
 xml файл со ссылками на видео в разных качествах, и ссылку на звуковой файл.
@@ -43,7 +43,7 @@ xml файл со ссылками на видео в разных качест�
 https://sd.redditsave.com/download.php?permalink={permalink}&video_url={video_url}&audio_url={audio_url}
 ```
 
-или такого
+Или такого, в зависимости от качества видео:
 
 ```
 https://sd.redditsave.com/download-sd.php?permalink={permalink}&video_url={video_url}&audio_url={audio_url}
