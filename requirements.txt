@@ -7,3 +7,4 @@ pyhelpers~=1.4.5
 urllib3~=1.26.14
 fake-useragent~=1.1.1
 lxml~=4.9.2
+aiohttp~=3.8.3
