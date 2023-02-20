@@ -3,7 +3,6 @@ import logging
 import os
 import re
 import tempfile
-from tempfile import NamedTemporaryFile
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import aiohttp
@@ -30,18 +29,24 @@ HEADERS = {
 WORK_TYPE = 'self_work'
 
 
-def concat_video_audio(video_link: str, audio_link: str) -> bytes:
-    video_response = requests.get(video_link, headers=HEADERS)
-    audio_response = requests.get(audio_link, headers=HEADERS)
+async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
+    async with aiohttp.ClientSession(headers=HEADERS) as session:
+        async with session.get(video_link) as response:
+            response.raise_for_status()
+            video_response = await response.read()
+    async with aiohttp.ClientSession(headers=HEADERS) as session:
+        async with session.get(audio_link) as response:
+            response.raise_for_status()
+            audio_response = await response.read()
 
     with tempfile.NamedTemporaryFile(
             delete=False) as video_file, tempfile.NamedTemporaryFile(
-            delete=False) as audio_file, tempfile.NamedTemporaryFile(
+        delete=False) as audio_file, tempfile.NamedTemporaryFile(
         suffix='.mp4',
         delete=False
     ) as output_file:
-        video_file.write(video_response.content)
-        audio_file.write(audio_response.content)
+        video_file.write(video_response)
+        audio_file.write(audio_response)
 
     input_video = ffmpeg.input(video_file.name)
     input_audio = ffmpeg.input(audio_file.name)
@@ -61,57 +66,47 @@ def concat_video_audio(video_link: str, audio_link: str) -> bytes:
     return output_data
 
 
-def size_file(url: str) -> float:
+async def size_file(url: str) -> float:
     """Get the size of the file."""
     logger.debug(f'Try get size file {url}')
     try:
-        response = requests.head(url, headers=HEADERS)
-        response.raise_for_status()
+        async with aiohttp.ClientSession() as session:
+            async with session.head(url, headers=HEADERS) as response:
+                response.raise_for_status()
+                size = round(
+                    int(response.headers['Content-Length']) / 1024 / 1024, 1)
+                logger.debug(f'File size: {size} MB')
+                return size
     except requests.exceptions.RequestException as e:
         logger.exception(f'Request to {url} failed: {e}')
         return 0.0
-    size = round(int(response.headers['Content-Length']) / 1024 / 1024, 1)
-    logger.debug(f'File size: {size} MB')
-    return size
 
 
-def parse_xml(xml: str, url: str, permalink: str) -> dict:
+async def parse_xml(xml: str, url: str) -> dict:
     """Find the SD video and return a dictionary with the links to the video"""
     video_links = []
     logger.debug(f'Get xml {xml}')
     soup = BeautifulSoup(xml, 'xml')
-    list_files = soup.find_all('AdaptationSet')
-    logger.debug('Check audio in file')
-    if len(list_files) > 1:
-        audio = url + list_files[1].find_all('BaseURL')[0].text
-        logger.debug(f'Audio found: {audio}')
-    else:
-        audio = 'false'
-        logger.debug(f'Audio not found: {audio}')
-    video_links.append(('audio', audio))
-
-    logger.debug('Check video in file')
-    videos = [x.text for x in list_files[0].find_all('BaseURL') if
-              'DASH_2' not in x.text]
-    for video in videos:
-        resolution = video.split('_')[1].split('.')[0]
-        if WORK_TYPE == 'redditsave':
-            link = (
-                'https://sd.redditsave.com/download-sd.php?permalink={permalink}&'
-                'video_url={video_url}&audio_url='
-                '{audio_url}'.format(
-                    permalink=permalink,
-                    video_url=url + video,
-                    audio_url=audio
-                ))
-        else:
-            link = url + video
-        size = size_file(link)
-        video_links.append(('{}p {}mb'.format(resolution, size), link))
+    for adaptation_set in soup.find_all('AdaptationSet'):
+        content_type = adaptation_set.get('contentType')
+        if content_type == 'audio':
+            base_url = adaptation_set.find('BaseURL').text
+            audio = url + base_url
+            video_links.append(('audio', audio))
+        elif content_type == 'video':
+            videos = [x.text for x in adaptation_set.find_all('BaseURL') if
+                      'DASH_2' not in x.text]
+            for video in videos:
+                resolution = video.split('_')[1].split('.')[0]
+                link = url + video
+                size = await size_file(link)
+                video_links.append(('{}p {}mb'.format(resolution, size), link))
+    if 'audio' not in video_links:
+        video_links.append(('audio', 'false'))
     return dict(video_links)
 
 
-def url_to_json(url: str) -> dict:
+async def url_to_json(url: str) -> dict:
     """Extracts video information from a Reddit URL
     and returns it as a dictionary.
     """
@@ -164,22 +159,17 @@ def url_to_json(url: str) -> dict:
                     logger.error(f"Request failed: {e}")
                     return {}
                 url_dl = find_json.get('url_overridden_by_dest', '') + '/'
-                video_link = parse_xml(dash, url_dl, url_clear)
-
+                video_link = await parse_xml(dash, url_dl)
             fallback_url = find_json.get('secure_media', {}).get(
                 'reddit_video', {}).get('fallback_url')
             if fallback_url:
                 max_resol = fallback_url.split('_')[1].split('.')[0]
-                if WORK_TYPE == 'redditsave':
-                    max_resol_link = (
-                        f'https://sd.redditsave.com/download.php?'
-                        f'permalink={url_clear}&video_url={fallback_url}&'
-                        f'audio_url={video_link.get("audio", "")}')
-                else:
-                    max_resol_link = fallback_url
-                size = size_file(max_resol_link)
+                max_resol_link = urljoin(
+                    fallback_url, urlparse(fallback_url).path)
+                size = await size_file(max_resol_link)
                 video_link[f'{max_resol}p {size}mb'] = max_resol_link
                 video_link['caption'] = caption
+                video_link['permalink'] = url_clear
                 return video_link
         except (
                 json.JSONDecodeError,
@@ -192,7 +182,7 @@ def url_to_json(url: str) -> dict:
 async def bot_get_links(message: types.Message) -> None:
     """Send a message with buttons to download the video"""
     msg = await message.answer(en.GET_LINKS_FOR_VIDEO)
-    links = url_to_json(message.text)
+    links = await url_to_json(message.text)
     if not links:
         logger.debug('The links dictionary is empty, sending an error message')
         await msg.edit_text(en.VIDEO_NOT_FOUND)
@@ -200,39 +190,53 @@ async def bot_get_links(message: types.Message) -> None:
         logger.debug('There are links, sending a message with buttons')
         caption = links.pop('caption', None)
         audio = links.pop('audio', None)
+        permalink = links.pop('permalink', None)
         users[message.from_user.id] = {
             'caption': caption,
             'audio': audio,
-            'links': links
+            'permalink': permalink,
+            'links': links,
         }
-
         await msg.edit_text(
             text=en.VIDEO_QUALITY,
             reply_markup=create_inline_kb(2, **links)
         )
 
 
+async def download_video(
+        video_link: str, audio_link: str, permalink: str
+        ) -> bytes:
+    if WORK_TYPE == 'redditsave':
+        link = (
+            'https://sd.redditsave.com/download-sd.php?permalink={permalink}&'
+            'video_url={video_url}&audio_url={audio_url}'.format(
+                permalink=permalink,
+                video_url=video_link,
+                audio_url=audio_link
+            ))
+        async with aiohttp.ClientSession(headers=HEADERS) as session:
+            async with session.get(link) as response:
+                response.raise_for_status()
+                video_content = await response.read()
+    else:
+        if audio_link != 'false':
+            video_content = await concat_video_audio(video_link, audio_link)
+        else:
+            async with aiohttp.ClientSession(headers=HEADERS) as session:
+                async with session.get(video_link) as response:
+                    response.raise_for_status()
+                    video_content = await response.read()
+    return video_content
+
+
 async def bot_send_video(callback: CallbackQuery) -> None:
     """Send video to user"""
     try:
         await callback.message.edit_text(text=en.DOWNLOADING_VIDEO)
-        if WORK_TYPE == 'redditsave':
-            async with aiohttp.ClientSession(headers=HEADERS) as session:
-                async with session.get(
-                        users[callback.from_user.id]['links'][
-                            callback.data]) as response:
-                    response.raise_for_status()
-                    video_content = await response.read()
-        else:
-            video_link = users[callback.from_user.id]['links'][callback.data]
-            audio_link = users[callback.from_user.id]['audio']
-            if audio_link != 'false':
-                video_content = (concat_video_audio(video_link, audio_link))
-            else:
-                async with aiohttp.ClientSession(headers=HEADERS) as session:
-                    async with session.get(video_link) as response:
-                        response.raise_for_status()
-                        video_content = await response.read()
+        video_link = users[callback.from_user.id]['links'][callback.data]
+        audio_link = users[callback.from_user.id]['audio']
+        permalink = users[callback.from_user.id]['permalink']
+        video_content = await download_video(video_link, audio_link, permalink)
         await callback.message.edit_text(text=en.SENDING_VIDEO)
         logger.info(
             f'Send video to user {callback.from_user.full_name}, '
@@ -251,7 +255,7 @@ async def bot_send_video(callback: CallbackQuery) -> None:
 async def bot_send_video_group(message: types.Message) -> None:
     """Send video to a group or channel in the second-to-last quality"""
     msg = await message.answer(text=en.GET_LINKS_FOR_VIDEO)
-    links = url_to_json(message.text)
+    links = await url_to_json(message.text)
     if not links:
         logger.debug(
             'The dictionary of links is empty, sending an error message.'
@@ -259,21 +263,16 @@ async def bot_send_video_group(message: types.Message) -> None:
         await msg.edit_text(en.VIDEO_NOT_FOUND)
     try:
         await msg.edit_text(text=en.DOWNLOADING_VIDEO)
-        if WORK_TYPE == 'redditsave':
-            async with aiohttp.ClientSession(headers=HEADERS) as session:
-                async with session.get(list(links.values())[-2]) as response:
-                    response.raise_for_status()
-                    video_content = await response.read()
-        else:
+
+        audio_link = links.pop('audio', None)
+        caption = links.pop('caption', None)
+        permalink = links.pop('permalink', None)
+        if len(links) > 1:
             video_link = list(links.values())[-2]
-            audio_link = links['audio']
-            if audio_link != 'false':
-                video_content = (concat_video_audio(video_link, audio_link))
-            else:
-                async with aiohttp.ClientSession(headers=HEADERS) as session:
-                    async with session.get(video_link) as response:
-                        response.raise_for_status()
-                        video_content = await response.read()
+        else:
+            video_link = list(links.values())[0]
+        print(links)
+        video_content = await download_video(video_link, audio_link, permalink)
         await msg.edit_text(text=en.SENDING_VIDEO)
         logger.info(
             f'Sending video for chat {message.chat.title}, {message.chat.type} '
@@ -281,7 +280,7 @@ async def bot_send_video_group(message: types.Message) -> None:
         )
         await message.answer_video(
             video=video_content,
-            caption=links.pop('caption', None)
+            caption=caption
         )
         await msg.delete()
     except (aiohttp.ClientError, Exception) as e:
