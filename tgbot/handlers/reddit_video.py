@@ -30,36 +30,35 @@ HEADERS = {
 WORK_TYPE = 'self_work'
 
 
-def concat_video_audio(video_link: str, audio_link: str) -> tempfile.TemporaryFile:
-    try:
-        video = requests.get(video_link, headers=HEADERS)
-        audio = requests.get(audio_link, headers=HEADERS)
+def concat_video_audio(video_link: str, audio_link: str) -> bytes:
+    video_response = requests.get(video_link, headers=HEADERS)
+    audio_response = requests.get(audio_link, headers=HEADERS)
 
-        with NamedTemporaryFile(delete=False) as video_file, NamedTemporaryFile(
-                delete=False) as audio_file, NamedTemporaryFile(
-            suffix='.mp4',
-            delete=False
-        ) as output_file:
-            video_file.write(video.content)
-            audio_file.write(audio.content)
+    with tempfile.NamedTemporaryFile(
+            delete=False) as video_file, tempfile.NamedTemporaryFile(
+            delete=False) as audio_file, tempfile.NamedTemporaryFile(
+        suffix='.mp4',
+        delete=False
+    ) as output_file:
+        video_file.write(video_response.content)
+        audio_file.write(audio_response.content)
 
-        input_video = ffmpeg.input(video_file.name)
-        input_audio = ffmpeg.input(audio_file.name)
-        (
-            ffmpeg
-            .concat(input_video, input_audio, v=1, a=1)
-            .output(output_file.name)
-            .run(quiet=True, overwrite_output=True)
-        )
-        return output_file
-    except Exception as e:
-        logger.exception(f'Error during video processing: {e}')
-        raise
-    finally:
-        if video_file:
-            os.remove(video_file.name)
-        if audio_file:
-            os.remove(audio_file.name)
+    input_video = ffmpeg.input(video_file.name)
+    input_audio = ffmpeg.input(audio_file.name)
+    (
+        ffmpeg
+        .concat(input_video, input_audio, v=1, a=1)
+        .output(output_file.name)
+        .run(quiet=True, overwrite_output=True)
+    )
+
+    with open(output_file.name, 'rb') as f:
+        output_data = f.read()
+
+    os.remove(video_file.name)
+    os.remove(audio_file.name)
+    os.remove(output_file.name)
+    return output_data
 
 
 def size_file(url: str) -> float:
@@ -228,8 +227,7 @@ async def bot_send_video(callback: CallbackQuery) -> None:
             video_link = users[callback.from_user.id]['links'][callback.data]
             audio_link = users[callback.from_user.id]['audio']
             if audio_link != 'false':
-                video = (concat_video_audio(video_link, audio_link))
-                video_content = open(video.name, "rb")
+                video_content = (concat_video_audio(video_link, audio_link))
             else:
                 async with aiohttp.ClientSession(headers=HEADERS) as session:
                     async with session.get(video_link) as response:
@@ -270,8 +268,7 @@ async def bot_send_video_group(message: types.Message) -> None:
             video_link = list(links.values())[-2]
             audio_link = links['audio']
             if audio_link != 'false':
-                video = (concat_video_audio(video_link, audio_link))
-                video_content = open(video.name, "rb")
+                video_content = (concat_video_audio(video_link, audio_link))
             else:
                 async with aiohttp.ClientSession(headers=HEADERS) as session:
                     async with session.get(video_link) as response:
