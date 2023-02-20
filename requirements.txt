@@ -8,3 +8,4 @@ urllib3~=1.26.14
 fake-useragent~=1.1.1
 lxml~=4.9.2
 aiohttp~=3.8.3
+ffmpeg-python~=0.2.0
