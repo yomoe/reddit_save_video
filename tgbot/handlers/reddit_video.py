@@ -30,6 +30,8 @@ WORK_TYPE = 'self_work'
 
 
 async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
+    print(audio_link)
+    print(video_link)
     async with aiohttp.ClientSession(headers=HEADERS) as session:
         async with session.get(video_link) as response:
             response.raise_for_status()
@@ -84,7 +86,7 @@ async def size_file(url: str) -> float:
 
 async def parse_xml(xml: str, url: str) -> dict:
     """Find the SD video and return a dictionary with the links to the video"""
-    video_links = []
+    video_links = {'audio': 'false'}
     logger.debug(f'Get xml {xml}')
     soup = BeautifulSoup(xml, 'xml')
     for adaptation_set in soup.find_all('AdaptationSet'):
@@ -92,7 +94,7 @@ async def parse_xml(xml: str, url: str) -> dict:
         if content_type == 'audio':
             base_url = adaptation_set.find('BaseURL').text
             audio = url + base_url
-            video_links.append(('audio', audio))
+            video_links['audio'] = audio
         elif content_type == 'video':
             videos = [x.text for x in adaptation_set.find_all('BaseURL') if
                       'DASH_2' not in x.text]
@@ -100,10 +102,9 @@ async def parse_xml(xml: str, url: str) -> dict:
                 resolution = video.split('_')[1].split('.')[0]
                 link = url + video
                 size = await size_file(link)
-                video_links.append(('{}p {}mb'.format(resolution, size), link))
-    if 'audio' not in video_links:
-        video_links.append(('audio', 'false'))
-    return dict(video_links)
+                video_links[f'{resolution}p {size}mb'] = link
+    print(video_links)
+    return video_links
 
 
 async def url_to_json(url: str) -> dict:
