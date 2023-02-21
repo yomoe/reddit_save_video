@@ -30,8 +30,6 @@ WORK_TYPE = 'self_work'
 
 
 async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
-    print(audio_link)
-    print(video_link)
     async with aiohttp.ClientSession(headers=HEADERS) as session:
         async with session.get(video_link) as response:
             response.raise_for_status()
@@ -103,7 +101,6 @@ async def parse_xml(xml: str, url: str) -> dict:
                 link = url + video
                 size = await size_file(link)
                 video_links[f'{resolution}p {size}mb'] = link
-    print(video_links)
     return video_links
 
 
@@ -139,45 +136,65 @@ async def url_to_json(url: str) -> dict:
 
     logger.debug(f"Response status code: {res.status_code}")
 
-    if 'reddit_video' in res.text:
+    def get_find_json(res_json):
+        find_json = res_json[0]['data'].get('children', [{}])[0]['data']
+        if 'crosspost_parent_list' in res.text:
+            find_json = find_json.get('crosspost_parent_list', [{}])[0]
+        return find_json
+
+    def get_caption(res_json):
+        return get_find_json(res_json).get('title')
+
+    def is_gif(res_json):
+        file = res_json[0]['data'].get('children', [{}])[0]['data'].get('url', [{}])
+        return os.path.splitext(file)[1] == '.gif'
+
+    async def get_video_links(fallback_url, dict_video):
+        max_resol = fallback_url.split('_')[1].split('.')[0]
+        max_resol_link = urljoin(fallback_url, urlparse(fallback_url).path)
+        size = await size_file(max_resol_link)
+        dict_video[f'{max_resol}p {size:.1f}mb'] = max_resol_link
+        return dict_video
+
+    try:
+        res_json = res.json()
         video_link = {}
-        try:
-            res_json = res.json()
-            find_json = res_json[0].get('data', {}).get('children', [{}])[
-                0].get('data', {})
-            caption = find_json.get('title')
+        if 'reddit_video_preview' in res.text:
+            find_json = get_find_json(res_json).get('preview', {}).get(
+                'reddit_video_preview', {})
 
-            if 'crosspost_parent_list' in res.text:
-                find_json = find_json.get('crosspost_parent_list', [{}])[0]
-
-            dash_url = find_json.get('secure_media', {}).get(
-                'reddit_video', {}).get(
-                'dash_url')
+            dash_url = find_json.get('dash_url')
             if dash_url:
-                try:
-                    dash = requests.get(dash_url, headers=HEADERS).text
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"Request failed: {e}")
-                    return {}
-                url_dl = find_json.get('url_overridden_by_dest', '') + '/'
+                dash = requests.get(dash_url, headers=HEADERS).text
+                url_dl = dash_url.split('DASHPlaylist.mpd')[0]
                 video_link = await parse_xml(dash, url_dl)
-            fallback_url = find_json.get('secure_media', {}).get(
-                'reddit_video', {}).get('fallback_url')
-            if fallback_url:
-                max_resol = fallback_url.split('_')[1].split('.')[0]
-                max_resol_link = urljoin(
-                    fallback_url, urlparse(fallback_url).path)
-                size = await size_file(max_resol_link)
-                video_link[f'{max_resol}p {size}mb'] = max_resol_link
-                video_link['caption'] = caption
-                video_link['permalink'] = url_clear
-                return video_link
-        except (
-                json.JSONDecodeError,
-                requests.exceptions.RequestException) as e:
-            logger.exception(f"Error: {e}")
-    else:
-        return {}
+
+            video_link['caption'] = get_caption(res_json)
+            video_link['permalink'] = url_clear
+            fallback_url = find_json.get('fallback_url')
+            return await get_video_links(fallback_url, video_link)
+
+        elif 'reddit_video' in res.text:
+            find_json = get_find_json(res_json).get('secure_media', {}).get(
+                'reddit_video', {})
+
+            dash_url = find_json.get('dash_url')
+            if dash_url:
+                dash = requests.get(dash_url, headers=HEADERS).text
+                url_dl = get_find_json(res_json).get('url_overridden_by_dest', '') + '/'
+                video_link = await parse_xml(dash, url_dl)
+
+            video_link['caption'] = get_caption(res_json)
+            video_link['permalink'] = url_clear
+            fallback_url = find_json.get('fallback_url')
+            return await get_video_links(fallback_url, video_link)
+        elif is_gif(res_json):
+            video_link['gif'] = res_json[0]['data'].get('children', [{}])[0]['data'].get('url', [{}])
+            return video_link
+        else:
+            return {}
+    except (json.JSONDecodeError, requests.exceptions.RequestException) as e:
+        logger.exception(f"Error: {e}")
 
 
 async def bot_get_links_private(message: types.Message) -> None:
@@ -187,6 +204,10 @@ async def bot_get_links_private(message: types.Message) -> None:
     if not links:
         logger.debug('The links dictionary is empty, sending an error message')
         await msg.edit_text(en.VIDEO_NOT_FOUND)
+    elif links['gif']:
+        await msg.edit_text(en.SENDING_GIF)
+        await message.answer_animation(links['gif'])
+        await msg.delete()
     else:
         logger.debug('There are links, sending a message with buttons')
         caption = links.pop('caption', None)
@@ -206,7 +227,7 @@ async def bot_get_links_private(message: types.Message) -> None:
 
 async def download_video(
         video_link: str, audio_link: str, permalink: str
-        ) -> bytes:
+) -> bytes:
     if WORK_TYPE == 'redditsave':
         link = (
             'https://sd.redditsave.com/download-sd.php?permalink={permalink}&'
@@ -262,6 +283,10 @@ async def bot_get_links_group(message: types.Message) -> None:
             'The dictionary of links is empty, sending an error message.'
         )
         await msg.edit_text(en.VIDEO_NOT_FOUND)
+    elif links['gif']:
+        await msg.edit_text(en.SENDING_GIF)
+        await message.answer_animation(links['gif'])
+        await msg.delete()
     else:
         try:
             await msg.edit_text(text=en.DOWNLOADING_VIDEO)
@@ -273,8 +298,8 @@ async def bot_get_links_group(message: types.Message) -> None:
                 video_link = list(links.values())[-2]
             else:
                 video_link = list(links.values())[0]
-            print(links)
-            video_content = await download_video(video_link, audio_link, permalink)
+            video_content = await download_video(
+                video_link, audio_link, permalink)
             await msg.edit_text(text=en.SENDING_VIDEO)
             logger.info(
                 f'Sending video for chat {message.chat.title}, {message.chat.type} '
