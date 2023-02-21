@@ -180,7 +180,7 @@ async def url_to_json(url: str) -> dict:
         return {}
 
 
-async def bot_get_links(message: types.Message) -> None:
+async def bot_get_links_private(message: types.Message) -> None:
     """Send a message with buttons to download the video"""
     msg = await message.answer(en.GET_LINKS_FOR_VIDEO)
     links = await url_to_json(message.text)
@@ -253,7 +253,7 @@ async def bot_send_video(callback: CallbackQuery) -> None:
         await callback.message.answer(en.FAILED_TO_SEND_VIDEO)
 
 
-async def bot_send_video_group(message: types.Message) -> None:
+async def bot_get_links_group(message: types.Message) -> None:
     """Send video to a group or channel in the second-to-last quality"""
     msg = await message.answer(text=en.GET_LINKS_FOR_VIDEO)
     links = await url_to_json(message.text)
@@ -262,31 +262,32 @@ async def bot_send_video_group(message: types.Message) -> None:
             'The dictionary of links is empty, sending an error message.'
         )
         await msg.edit_text(en.VIDEO_NOT_FOUND)
-    try:
-        await msg.edit_text(text=en.DOWNLOADING_VIDEO)
+    else:
+        try:
+            await msg.edit_text(text=en.DOWNLOADING_VIDEO)
 
-        audio_link = links.pop('audio', None)
-        caption = links.pop('caption', None)
-        permalink = links.pop('permalink', None)
-        if len(links) > 1:
-            video_link = list(links.values())[-2]
-        else:
-            video_link = list(links.values())[0]
-        print(links)
-        video_content = await download_video(video_link, audio_link, permalink)
-        await msg.edit_text(text=en.SENDING_VIDEO)
-        logger.info(
-            f'Sending video for chat {message.chat.title}, {message.chat.type} '
-            f'id {message.chat.id}'
-        )
-        await message.answer_video(
-            video=video_content,
-            caption=caption
-        )
-        await msg.delete()
-    except (aiohttp.ClientError, Exception) as e:
-        logging.exception(f"Failed to send video: {e}")
-        await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
+            audio_link = links.pop('audio', None)
+            caption = links.pop('caption', None)
+            permalink = links.pop('permalink', None)
+            if len(links) > 1:
+                video_link = list(links.values())[-2]
+            else:
+                video_link = list(links.values())[0]
+            print(links)
+            video_content = await download_video(video_link, audio_link, permalink)
+            await msg.edit_text(text=en.SENDING_VIDEO)
+            logger.info(
+                f'Sending video for chat {message.chat.title}, {message.chat.type} '
+                f'id {message.chat.id}'
+            )
+            await message.answer_video(
+                video=video_content,
+                caption=caption
+            )
+            await msg.delete()
+        except (aiohttp.ClientError, Exception) as e:
+            logging.exception(f"Failed to send video: {e}")
+            await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
 
 
 async def bot_send_video_cancel(callback: CallbackQuery) -> None:
@@ -301,7 +302,7 @@ async def bot_send_video_cancel(callback: CallbackQuery) -> None:
 
 def register_get_links(dp: Dispatcher) -> None:
     dp.register_message_handler(
-        bot_get_links, text_startswith=['https://www.reddit.com/r/'],
+        bot_get_links_private, text_startswith=['https://www.reddit.com/r/'],
         chat_type=types.ChatType.PRIVATE)
     dp.register_callback_query_handler(
         bot_send_video, text_endswith='mb',
@@ -310,4 +311,4 @@ def register_get_links(dp: Dispatcher) -> None:
         bot_send_video_cancel, text_endswith='cancel',
         chat_type=types.ChatType.PRIVATE)
     dp.register_message_handler(
-        bot_send_video_group, text_startswith=['https://www.reddit.com/r/'])
+        bot_get_links_group, text_startswith=['https://www.reddit.com/r/'])
