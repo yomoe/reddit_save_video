@@ -197,6 +197,7 @@ async def url_to_json(url: str) -> dict:
         elif is_gif(res_json):
             video_link['gif'] = res_json[0]['data'].get('children', [{}])[0][
                 'data'].get('url', [{}])
+            video_link['caption'] = get_caption(res_json)
             return video_link
         else:
             return {}
@@ -213,7 +214,7 @@ async def bot_get_links_private(message: types.Message) -> None:
         await msg.edit_text(en.VIDEO_NOT_FOUND)
     elif 'gif' in links:
         await msg.edit_text(en.SENDING_GIF)
-        await message.answer_animation(links['gif'])
+        await message.answer_animation(links['gif'], caption=links['caption'])
         await msg.delete()
     else:
         logger.debug('There are links, sending a message with buttons')
@@ -295,7 +296,7 @@ async def bot_get_links_group(message: types.Message) -> None:
         await msg.edit_text(en.VIDEO_NOT_FOUND)
     elif 'gif' in links:
         await msg.edit_text(en.SENDING_GIF)
-        await message.answer_animation(links['gif'])
+        await message.answer_animation(links['gif'], caption=links['caption'])
         await msg.delete()
     else:
         try:
