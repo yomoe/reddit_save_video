@@ -146,8 +146,12 @@ async def url_to_json(url: str) -> dict:
         return get_find_json(res_json).get('title')
 
     def is_gif(res_json):
-        file = res_json[0]['data'].get('children', [{}])[0]['data'].get('url', [{}])
+        file = res_json[0]['data'].get('children', [{}])[0]['data'].get(
+            'url', [{}])
         return os.path.splitext(file)[1] == '.gif'
+
+    def is_nsfw(res_json):
+        return 'nsfw' in get_find_json(res_json).get('thumbnail')
 
     async def get_video_links(fallback_url, dict_video):
         max_resol = fallback_url.split('_')[1].split('.')[0]
@@ -181,15 +185,18 @@ async def url_to_json(url: str) -> dict:
             dash_url = find_json.get('dash_url')
             if dash_url:
                 dash = requests.get(dash_url, headers=HEADERS).text
-                url_dl = get_find_json(res_json).get('url_overridden_by_dest', '') + '/'
+                url_dl = get_find_json(res_json).get(
+                    'url_overridden_by_dest', '') + '/'
                 video_link = await parse_xml(dash, url_dl)
 
             video_link['caption'] = get_caption(res_json)
             video_link['permalink'] = url_clear
+            video_link['nsfw'] = is_nsfw(res_json)
             fallback_url = find_json.get('fallback_url')
             return await get_video_links(fallback_url, video_link)
         elif is_gif(res_json):
-            video_link['gif'] = res_json[0]['data'].get('children', [{}])[0]['data'].get('url', [{}])
+            video_link['gif'] = res_json[0]['data'].get('children', [{}])[0][
+                'data'].get('url', [{}])
             return video_link
         else:
             return {}
@@ -204,12 +211,13 @@ async def bot_get_links_private(message: types.Message) -> None:
     if not links:
         logger.debug('The links dictionary is empty, sending an error message')
         await msg.edit_text(en.VIDEO_NOT_FOUND)
-    elif links['gif']:
+    elif 'gif' in links:
         await msg.edit_text(en.SENDING_GIF)
         await message.answer_animation(links['gif'])
         await msg.delete()
     else:
         logger.debug('There are links, sending a message with buttons')
+        nsfw = links.pop('nsfw', None)
         caption = links.pop('caption', None)
         audio = links.pop('audio', None)
         permalink = links.pop('permalink', None)
@@ -217,6 +225,7 @@ async def bot_get_links_private(message: types.Message) -> None:
             'caption': caption,
             'audio': audio,
             'permalink': permalink,
+            'nsfw': nsfw,
             'links': links,
         }
         await msg.edit_text(
@@ -258,6 +267,7 @@ async def bot_send_video(callback: CallbackQuery) -> None:
         video_link = users[callback.from_user.id]['links'][callback.data]
         audio_link = users[callback.from_user.id]['audio']
         permalink = users[callback.from_user.id]['permalink']
+        nsfw = users[callback.from_user.id]['nsfw']
         video_content = await download_video(video_link, audio_link, permalink)
         await callback.message.edit_text(text=en.SENDING_VIDEO)
         logger.info(
@@ -266,7 +276,7 @@ async def bot_send_video(callback: CallbackQuery) -> None:
         )
         await callback.message.answer_video(
             video=video_content,
-            caption=users[callback.from_user.id]['caption']
+            caption=users[callback.from_user.id]['caption'],
         )
         await callback.message.delete()
     except (aiohttp.ClientError, Exception) as e:
@@ -283,7 +293,7 @@ async def bot_get_links_group(message: types.Message) -> None:
             'The dictionary of links is empty, sending an error message.'
         )
         await msg.edit_text(en.VIDEO_NOT_FOUND)
-    elif links['gif']:
+    elif 'gif' in links:
         await msg.edit_text(en.SENDING_GIF)
         await message.answer_animation(links['gif'])
         await msg.delete()
@@ -302,8 +312,8 @@ async def bot_get_links_group(message: types.Message) -> None:
                 video_link, audio_link, permalink)
             await msg.edit_text(text=en.SENDING_VIDEO)
             logger.info(
-                f'Sending video for chat {message.chat.title}, {message.chat.type} '
-                f'id {message.chat.id}'
+                f'Sending video for chat {message.chat.title}, '
+                f'{message.chat.type} id {message.chat.id}'
             )
             await message.answer_video(
                 video=video_content,
