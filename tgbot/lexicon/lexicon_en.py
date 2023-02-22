@@ -10,15 +10,17 @@ START_MSG = (
 
 CANCEL_INLINE = 'Cancel'
 
-GET_LINKS_FOR_VIDEO = 'Get links for video.'
+GET_LINKS_FOR_VIDEO = 'Get links for video'
 
 VIDEO_NOT_FOUND = 'Video not found'
 
 VIDEO_QUALITY = 'What video resolution quality for you needs?'
 
-DOWNLOADING_VIDEO = 'I\'m downloading video.'
+DOWNLOADING_VIDEO = 'I\'m downloading video'
 
-SENDING_VIDEO = 'I\'m sending video.'
+SENDING_VIDEO = 'I\'m sending video'
+
+SENDING_GIF = 'I\'m sending gif'
 
 SEND_VIDEO_CANCEL = 'Send video cancel by user'
 
