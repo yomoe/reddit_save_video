@@ -214,6 +214,10 @@ async def bot_get_links_private(message: types.Message) -> None:
         await msg.edit_text(en.VIDEO_NOT_FOUND)
     elif 'gif' in links:
         await msg.edit_text(en.SENDING_GIF)
+        logger.info(
+            f'Send gif to user {message.from_user.full_name}, '
+            f'id {message.from_user.id}'
+        )
         await message.answer_animation(links['gif'], caption=links['caption'])
         await msg.delete()
     else:
