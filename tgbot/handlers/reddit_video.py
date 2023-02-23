@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 
 from tgbot.keyboards.inline import create_inline_kb
-from ..lexicon import lexicon_en as en
+from tgbot.lexicon import lexicon_en as en
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +25,9 @@ HEADERS = {
     'user-agent': ua.chrome,
 }
 
-# WORK_TYPE can be redditsave or self_work
-WORK_TYPE = 'self_work'
-
 
 async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
+    """Concatenate video with audio and return the result."""
     async with aiohttp.ClientSession(headers=HEADERS) as session:
         async with session.get(video_link) as response:
             response.raise_for_status()
@@ -57,8 +55,8 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
         .run(quiet=True, overwrite_output=True)
     )
 
-    with open(output_file.name, 'rb') as f:
-        output_data = f.read()
+    with open(output_file.name, 'rb') as ready_file:
+        output_data = ready_file.read()
 
     os.remove(video_file.name)
     os.remove(audio_file.name)
@@ -68,24 +66,24 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
 
 async def size_file(url: str) -> float:
     """Get the size of the file."""
-    logger.debug(f'Try get size file {url}')
+    logger.debug('Try get size file %s', url)
     try:
         async with aiohttp.ClientSession() as session:
             async with session.head(url, headers=HEADERS) as response:
                 response.raise_for_status()
                 size = round(
                     int(response.headers['Content-Length']) / 1024 / 1024, 1)
-                logger.debug(f'File size: {size} MB')
+                logger.debug('File size: %s MB', size)
                 return size
-    except requests.exceptions.RequestException as e:
-        logger.exception(f'Request to {url} failed: {e}')
+    except requests.exceptions.RequestException as error:
+        logger.exception('Request to %s failed: %s', url, error)
         return 0.0
 
 
 async def parse_xml(xml: str, url: str) -> dict:
     """Find the SD video and return a dictionary with the links to the video"""
     video_links = {'audio': 'false'}
-    logger.debug(f'Get xml {xml}')
+    logger.debug('Get xml %s', xml)
     soup = BeautifulSoup(xml, 'xml')
     for adaptation_set in soup.find_all('AdaptationSet'):
         content_type = adaptation_set.get('contentType')
@@ -104,37 +102,33 @@ async def parse_xml(xml: str, url: str) -> dict:
     return video_links
 
 
-async def url_to_json(url: str) -> dict:
-    """Extracts video information from a Reddit URL
-    and returns it as a dictionary.
-    """
+def clear_url(url):
+    """Delete parameters from link and change link to json link"""
     try:
         parsed_url = urlparse(url)._replace(query='', fragment='')
         url = urlunparse(parsed_url)
-        logger.debug(f"Extracted URL: {url}")
-    except AttributeError:
-        logger.error(f"No URL found in {url}")
-        return {}
-    try:
+        logger.debug('Extracted URL: %s', parsed_url)
         url_clear = urljoin(url, urlparse(url).path)
-        logger.debug(f'Delete parameters from link: {url_clear}')
-    except AttributeError:
-        logger.error(f"Can't clear parameters {url}")
-        return {}
-    try:
-        url_json = re.sub(r'/$', '.json', url_clear)
-        logger.info(f'Change link to json link: {url_json}')
-    except AttributeError:
-        logger.error(f"Can't change link to json {url_clear}")
-        return {}
-    try:
-        res = requests.get(url_json, headers=HEADERS)
-        res.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Request failed: {e}")
+        logger.debug('Delete parameters from link: %s', url_clear)
+        url_json = re.sub(
+            r'/$',
+            '.json',
+            url_clear
+        ) if url_clear.endswith('/') else f'{url_clear}.json'
+        logger.info('Change link to json link: %s', url_json)
+        return url_json
+    except requests.exceptions.RequestException as error:
+        logger.error('Request failed: %s', error)
         return {}
 
-    logger.debug(f"Response status code: {res.status_code}")
+
+async def get_links(url: str) -> dict:
+    """Extracts video information from a Reddit URL
+    and returns it as a dictionary.
+    """
+    res = requests.get(clear_url(url), headers=HEADERS, timeout=10)
+    res.raise_for_status()
+    logger.debug('Response status code: %s', res.status_code)
 
     def get_find_json(res_json):
         find_json = res_json[0]['data'].get('children', [{}])[0]['data']
@@ -169,54 +163,57 @@ async def url_to_json(url: str) -> dict:
 
             dash_url = find_json.get('dash_url')
             if dash_url:
-                dash = requests.get(dash_url, headers=HEADERS).text
+                dash = requests.get(dash_url, headers=HEADERS, timeout=10).text
                 url_dl = dash_url.split('DASHPlaylist.mpd')[0]
                 video_link = await parse_xml(dash, url_dl)
 
             video_link['caption'] = get_caption(res_json)
-            video_link['permalink'] = url_clear
             fallback_url = find_json.get('fallback_url')
             return await get_video_links(fallback_url, video_link)
 
-        elif 'reddit_video' in res.text:
+        if 'reddit_video' in res.text:
             find_json = get_find_json(res_json).get('secure_media', {}).get(
                 'reddit_video', {})
 
             dash_url = find_json.get('dash_url')
             if dash_url:
-                dash = requests.get(dash_url, headers=HEADERS).text
+                dash = requests.get(dash_url, headers=HEADERS, timeout=10).text
                 url_dl = get_find_json(res_json).get(
                     'url_overridden_by_dest', '') + '/'
                 video_link = await parse_xml(dash, url_dl)
 
             video_link['caption'] = get_caption(res_json)
-            video_link['permalink'] = url_clear
             video_link['nsfw'] = is_nsfw(res_json)
             fallback_url = find_json.get('fallback_url')
             return await get_video_links(fallback_url, video_link)
-        elif is_gif(res_json):
+
+        if is_gif(res_json):
             video_link['gif'] = res_json[0]['data'].get('children', [{}])[0][
                 'data'].get('url', [{}])
             video_link['caption'] = get_caption(res_json)
             return video_link
-        else:
-            return {}
-    except (json.JSONDecodeError, requests.exceptions.RequestException) as e:
-        logger.exception(f"Error: {e}")
+        return {}
+    except (
+            json.JSONDecodeError,
+            requests.exceptions.RequestException
+    ) as error:
+        logger.exception('Error: %s', error)
+        return {}
 
 
 async def bot_get_links_private(message: types.Message) -> None:
     """Send a message with buttons to download the video"""
     msg = await message.answer(en.GET_LINKS_FOR_VIDEO)
-    links = await url_to_json(message.text)
+    links = await get_links(message.text)
     if not links:
         logger.debug('The links dictionary is empty, sending an error message')
         await msg.edit_text(en.VIDEO_NOT_FOUND)
     elif 'gif' in links:
         await msg.edit_text(en.SENDING_GIF)
         logger.info(
-            f'Send gif to user {message.from_user.full_name}, '
-            f'id {message.from_user.id}'
+            'Send gif to user %s, id %s',
+            message.from_user.full_name,
+            message.from_user.id
         )
         await message.answer_animation(links['gif'], caption=links['caption'])
         await msg.delete()
@@ -225,11 +222,9 @@ async def bot_get_links_private(message: types.Message) -> None:
         nsfw = links.pop('nsfw', None)
         caption = links.pop('caption', None)
         audio = links.pop('audio', None)
-        permalink = links.pop('permalink', None)
         users[message.from_user.id] = {
             'caption': caption,
             'audio': audio,
-            'permalink': permalink,
             'nsfw': nsfw,
             'links': links,
         }
@@ -239,29 +234,15 @@ async def bot_get_links_private(message: types.Message) -> None:
         )
 
 
-async def download_video(
-        video_link: str, audio_link: str, permalink: str
-) -> bytes:
-    if WORK_TYPE == 'redditsave':
-        link = (
-            'https://sd.redditsave.com/download-sd.php?permalink={permalink}&'
-            'video_url={video_url}&audio_url={audio_url}'.format(
-                permalink=permalink,
-                video_url=video_link,
-                audio_url=audio_link
-            ))
+async def download_video(video_link: str, audio_link: str) -> bytes:
+    """Download video and audio"""
+    if audio_link != 'false':
+        video_content = await concat_video_audio(video_link, audio_link)
+    else:
         async with aiohttp.ClientSession(headers=HEADERS) as session:
-            async with session.get(link) as response:
+            async with session.get(video_link) as response:
                 response.raise_for_status()
                 video_content = await response.read()
-    else:
-        if audio_link != 'false':
-            video_content = await concat_video_audio(video_link, audio_link)
-        else:
-            async with aiohttp.ClientSession(headers=HEADERS) as session:
-                async with session.get(video_link) as response:
-                    response.raise_for_status()
-                    video_content = await response.read()
     return video_content
 
 
@@ -271,28 +252,41 @@ async def bot_send_video(callback: CallbackQuery) -> None:
         await callback.message.edit_text(text=en.DOWNLOADING_VIDEO)
         video_link = users[callback.from_user.id]['links'][callback.data]
         audio_link = users[callback.from_user.id]['audio']
-        permalink = users[callback.from_user.id]['permalink']
-        nsfw = users[callback.from_user.id]['nsfw']
-        video_content = await download_video(video_link, audio_link, permalink)
+        # nsfw = users[callback.from_user.id]['nsfw'] # for future use
+        video_content = await download_video(video_link, audio_link)
         await callback.message.edit_text(text=en.SENDING_VIDEO)
         logger.info(
-            f'Send video to user {callback.from_user.full_name}, '
-            f'id {callback.from_user.id}'
+            'Send video to user %s, id %s',
+            callback.from_user.full_name,
+            callback.from_user.id
         )
         await callback.message.answer_video(
             video=video_content,
             caption=users[callback.from_user.id]['caption'],
         )
         await callback.message.delete()
-    except (aiohttp.ClientError, Exception) as e:
-        logging.exception(f"Failed to send video: {e}")
+
+    except aiohttp.ClientResponseError as error:
+        logging.exception('Failed to send video: %s', error)
+        await callback.message.answer(en.FAILED_TO_SEND_VIDEO)
+
+    except aiohttp.ClientPayloadError as error:
+        logging.exception('Failed to send video: %s', error)
+        await callback.message.answer(en.FAILED_TO_SEND_VIDEO)
+
+    except aiohttp.ServerDisconnectedError as error:
+        logging.exception('Failed to send video: %s', error)
+        await callback.message.answer(en.FAILED_TO_SEND_VIDEO)
+
+    except aiohttp.ClientConnectionError as error:
+        logging.exception('Failed to send video: %s', error)
         await callback.message.answer(en.FAILED_TO_SEND_VIDEO)
 
 
 async def bot_get_links_group(message: types.Message) -> None:
     """Send video to a group or channel in the second-to-last quality"""
     msg = await message.answer(text=en.GET_LINKS_FOR_VIDEO)
-    links = await url_to_json(message.text)
+    links = await get_links(message.text)
     if not links:
         logger.debug(
             'The dictionary of links is empty, sending an error message.'
@@ -308,39 +302,53 @@ async def bot_get_links_group(message: types.Message) -> None:
 
             audio_link = links.pop('audio', None)
             caption = links.pop('caption', None)
-            permalink = links.pop('permalink', None)
             if len(links) > 1:
                 video_link = list(links.values())[-2]
             else:
                 video_link = list(links.values())[0]
-            video_content = await download_video(
-                video_link, audio_link, permalink)
+            video_content = await download_video(video_link, audio_link)
             await msg.edit_text(text=en.SENDING_VIDEO)
             logger.info(
-                f'Sending video for chat {message.chat.title}, '
-                f'{message.chat.type} id {message.chat.id}'
+                'Sending video for chat %s, %s id %s',
+                message.chat.title,
+                message.chat.type,
+                message.chat.id
             )
             await message.answer_video(
                 video=video_content,
                 caption=caption
             )
             await msg.delete()
-        except (aiohttp.ClientError, Exception) as e:
-            logging.exception(f"Failed to send video: {e}")
+        except aiohttp.ClientResponseError as error:
+            logging.exception('Failed to send video: %s', error)
+            await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
+
+        except aiohttp.ClientPayloadError as error:
+            logging.exception('Failed to send video: %s', error)
+            await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
+
+        except aiohttp.ServerDisconnectedError as error:
+            logging.exception('Failed to send video: %s', error)
+            await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
+
+        except aiohttp.ClientConnectionError as error:
+            logging.exception('Failed to send video: %s', error)
             await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
 
 
 async def bot_send_video_cancel(callback: CallbackQuery) -> None:
     """Cancel sending video"""
     logger.info(
-        f'User {callback.from_user.full_name}, '
-        f'id {callback.from_user.id} canceled sending video'
+        'User %s, id %s canceled sending video',
+        callback.from_user.full_name,
+        callback.from_user.id
     )
     await callback.message.edit_text(
         text=en.SEND_VIDEO_CANCEL)
 
 
 def register_get_links(dp: Dispatcher) -> None:
+    """Register handlers for get links"""
     dp.register_message_handler(
         bot_get_links_private, text_startswith=['https://www.reddit.com/r/'],
         chat_type=types.ChatType.PRIVATE)
