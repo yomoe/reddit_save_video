@@ -299,9 +299,9 @@ async def bot_get_links_group(message: types.Message) -> None:
     else:
         try:
             await msg.edit_text(text=en.DOWNLOADING_VIDEO)
-
             audio_link = links.pop('audio', None)
             caption = links.pop('caption', None)
+            nsfw = links.pop('nsfw', None)
             if len(links) > 1:
                 video_link = list(links.values())[-2]
             else:
