@@ -72,7 +72,8 @@ async def size_file(url: str) -> float:
             async with session.head(url, headers=HEADERS) as response:
                 response.raise_for_status()
                 size = round(
-                    int(response.headers['Content-Length']) / 1024 / 1024, 1)
+                    int(response.headers['Content-Length']) / 1024 / 1024, 1
+                )
                 logger.debug('File size: %s MB', size)
                 return size
     except requests.exceptions.RequestException as error:
@@ -314,10 +315,7 @@ async def bot_get_links_group(message: types.Message) -> None:
                 message.chat.type,
                 message.chat.id
             )
-            await message.answer_video(
-                video=video_content,
-                caption=caption
-            )
+            await message.answer_video(video=video_content, caption=caption)
             await msg.delete()
         except aiohttp.ClientResponseError as error:
             logging.exception('Failed to send video: %s', error)
