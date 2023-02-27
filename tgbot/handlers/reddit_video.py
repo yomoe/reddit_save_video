@@ -250,6 +250,11 @@ async def bot_get_links_private(message: types.Message) -> None:
         if not video:
             await msg.edit_text(en.VIDEO_NOT_FOUND)
         else:
+            logger.info(
+                'Send gif to user %s, id %s',
+                message.from_user.full_name,
+                message.from_user.id
+            )
             await message.answer_video(video, caption=links['caption'])
             await msg.delete()
     elif 'gif' in links:
@@ -339,10 +344,25 @@ async def bot_get_links_group(message: types.Message) -> None:
     elif 'redgifs' in links:
         await msg.edit_text(en.SENDING_REDGIFS)
         video = await get_redgifs(links['redgifs'])
-        await message.answer_video(video, caption=links['caption'])
-        await msg.delete()
+        if not video:
+            await msg.edit_text(en.VIDEO_NOT_FOUND)
+        else:
+            logger.info(
+                'Sending gif for chat %s, %s id %s',
+                message.chat.title,
+                message.chat.type,
+                message.chat.id
+            )
+            await message.answer_video(video, caption=links['caption'])
+            await msg.delete()
     elif 'gif' in links:
         await msg.edit_text(en.SENDING_GIF)
+        logger.info(
+            'Sending gif for chat %s, %s id %s',
+            message.chat.title,
+            message.chat.type,
+            message.chat.id
+        )
         await message.answer_animation(links['gif'], caption=links['caption'])
         await msg.delete()
     else:
