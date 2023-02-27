@@ -24,6 +24,7 @@ ua = UserAgent()
 HEADERS = {
     'user-agent': ua.chrome,
 }
+API_URL_REDGIFS = 'https://api.redgifs.com/v1/gifs/'
 
 
 async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
@@ -62,6 +63,29 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
     os.remove(audio_file.name)
     os.remove(output_file.name)
     return output_data
+
+
+async def get_redgifs(url_id: str) -> bytes or None:
+    """Get the video from redgifs.com."""
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(API_URL_REDGIFS + url_id) as response:
+                redgifs_json = await response.json()
+                video_url = (redgifs_json.get('gif', {}).get('urls', {}).get(
+                    'hd') or redgifs_json.get('gfyItem', {}).get(
+                    'content_urls', {}).get(
+                    'mp4', {}).get(
+                    'url'))
+        except (aiohttp.ClientError, json.JSONDecodeError):
+            logger.exception('Error getting json from %s', url_id)
+            return None
+        try:
+            async with session.get(video_url) as video:
+                file_data = await video.read()
+        except aiohttp.ClientError:
+            logger.exception('Error getting video from %s', url_id)
+            return None
+        return file_data
 
 
 async def size_file(url: str) -> float:
@@ -148,6 +172,10 @@ async def get_links(url: str) -> dict:
     def is_nsfw(res_json):
         return 'nsfw' in get_find_json(res_json).get('thumbnail')
 
+    def is_redgifs(res_json):
+        return 'redgifs.com' in get_find_json(res_json).get('media').get(
+            'type')
+
     async def get_video_links(fallback_url, dict_video):
         max_resol = fallback_url.split('_')[1].split('.')[0]
         max_resol_link = urljoin(fallback_url, urlparse(fallback_url).path)
@@ -193,6 +221,13 @@ async def get_links(url: str) -> dict:
                 'data'].get('url', [{}])
             video_link['caption'] = get_caption(res_json)
             return video_link
+
+        if is_redgifs(res_json):
+            redgifs_url = get_find_json(res_json).get('url').split('/watch/')[
+                1]
+            video_link['redgifs'] = redgifs_url
+            video_link['caption'] = get_caption(res_json)
+            return video_link
         return {}
     except (
             json.JSONDecodeError,
@@ -209,6 +244,14 @@ async def bot_get_links_private(message: types.Message) -> None:
     if not links:
         logger.debug('The links dictionary is empty, sending an error message')
         await msg.edit_text(en.VIDEO_NOT_FOUND)
+    elif 'redgifs' in links:
+        await msg.edit_text(en.SENDING_REDGIFS)
+        video = await get_redgifs(links['redgifs'])
+        if not video:
+            await msg.edit_text(en.VIDEO_NOT_FOUND)
+        else:
+            await message.answer_video(video, caption=links['caption'])
+            await msg.delete()
     elif 'gif' in links:
         await msg.edit_text(en.SENDING_GIF)
         logger.info(
@@ -293,6 +336,11 @@ async def bot_get_links_group(message: types.Message) -> None:
             'The dictionary of links is empty, sending an error message.'
         )
         await msg.edit_text(en.VIDEO_NOT_FOUND)
+    elif 'redgifs' in links:
+        await msg.edit_text(en.SENDING_REDGIFS)
+        video = await get_redgifs(links['redgifs'])
+        await message.answer_video(video, caption=links['caption'])
+        await msg.delete()
     elif 'gif' in links:
         await msg.edit_text(en.SENDING_GIF)
         await message.answer_animation(links['gif'], caption=links['caption'])
