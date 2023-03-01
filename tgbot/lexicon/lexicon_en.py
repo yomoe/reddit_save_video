@@ -2,7 +2,7 @@ START_MSG = (
     'Hello, {name}!\n'
     'I\'m Reddit Save Video bot. I can download:\n🟢 Videos\n🟢 Images\n'
     '🟢 Galleries\n🟢 Gifs\n🟢 RedGifs 😉\nfrom Reddit and send them to you. '
-    'Just send me a link to the post with the video.\n'
+    'Just send me a link to the post with the content.\n'
     '\nFor example:\n'
     'https://www.reddit.com/r/oddlysatisfying/comments/1125p83/'
     'lighter_filmed_1000_times_slower_than_real_life/\n'
