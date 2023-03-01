@@ -65,6 +65,37 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
     return output_data
 
 
+async def gif_to_mp4(gif_link: str) -> bytes:
+    """Convert gif to mp4 and return the result."""
+    async with aiohttp.ClientSession(headers=HEADERS) as session:
+        async with session.get(gif_link) as response:
+            response.raise_for_status()
+            gif_response = await response.read()
+
+    with tempfile.NamedTemporaryFile(
+            suffix='.gif',
+            delete=False
+    ) as gif_file, tempfile.NamedTemporaryFile(
+        suffix='.mp4',
+        delete=False
+    ) as output_file:
+        gif_file.write(gif_response)
+
+    (
+        ffmpeg
+        .input(gif_file.name)
+        .output(output_file.name)
+        .run(quiet=True, overwrite_output=True)
+    )
+
+    with open(output_file.name, 'rb') as ready_file:
+        output_data = ready_file.read()
+
+    os.remove(gif_file.name)
+    os.remove(output_file.name)
+    return output_data
+
+
 async def get_redgifs(url_id: str) -> bytes or None:
     """Get the video from redgifs.com."""
     async with aiohttp.ClientSession() as session:
@@ -140,7 +171,7 @@ def clear_url(url):
             '.json',
             url_clear
         ) if url_clear.endswith('/') else f'{url_clear}.json'
-        logger.info('Change link to json link: %s', url_json)
+        logger.info('Url: %s', url)
         return url_json
     except requests.exceptions.RequestException as error:
         logger.error('Request failed: %s', error)
@@ -162,19 +193,25 @@ async def get_links(url: str) -> dict:
         return find_json
 
     def get_caption(res_json):
-        return get_find_json(res_json).get('title')
+        return res_json[0]['data'].get('children', [{}])[0]['data'].get('title')
 
-    def is_gif(res_json):
+    def is_image(res_json):
         file = res_json[0]['data'].get('children', [{}])[0]['data'].get(
-            'url', [{}])
-        return os.path.splitext(file)[1] == '.gif'
+            'post_hint', [{}])
+        return file == 'image'
 
     def is_nsfw(res_json):
-        return 'nsfw' in get_find_json(res_json).get('thumbnail')
+        try:
+            return 'nsfw' in get_find_json(res_json).get('thumbnail')
+        except AttributeError:
+            return False
 
     def is_redgifs(res_json):
-        return 'redgifs.com' in get_find_json(res_json).get('media').get(
-            'type')
+        try:
+            return 'redgifs.com' in get_find_json(res_json).get('media').get(
+                'type')
+        except AttributeError:
+            return False
 
     async def get_video_links(fallback_url, dict_video):
         max_resol = fallback_url.split('_')[1].split('.')[0]
@@ -216,8 +253,8 @@ async def get_links(url: str) -> dict:
             fallback_url = find_json.get('fallback_url')
             return await get_video_links(fallback_url, video_link)
 
-        if is_gif(res_json):
-            video_link['gif'] = res_json[0]['data'].get('children', [{}])[0][
+        if is_image(res_json):
+            video_link['image'] = res_json[0]['data'].get('children', [{}])[0][
                 'data'].get('url', [{}])
             video_link['caption'] = get_caption(res_json)
             return video_link
@@ -241,6 +278,7 @@ async def bot_get_links_private(message: types.Message) -> None:
     """Send a message with buttons to download the video"""
     msg = await message.answer(en.GET_LINKS_FOR_VIDEO)
     links = await get_links(message.text)
+    print(links)
     if not links:
         logger.debug('The links dictionary is empty, sending an error message')
         await msg.edit_text(en.VIDEO_NOT_FOUND)
@@ -251,20 +289,27 @@ async def bot_get_links_private(message: types.Message) -> None:
             await msg.edit_text(en.VIDEO_NOT_FOUND)
         else:
             logger.info(
-                'Send gif to user %s, id %s',
+                'Send redgifs to user %s, id %s',
                 message.from_user.full_name,
                 message.from_user.id
             )
             await message.answer_video(video, caption=links['caption'])
             await msg.delete()
-    elif 'gif' in links:
-        await msg.edit_text(en.SENDING_GIF)
+    elif 'image' in links:
+        await msg.edit_text(en.SENDING_IMAGE)
         logger.info(
-            'Send gif to user %s, id %s',
+            'Send is_image to user %s, id %s',
             message.from_user.full_name,
             message.from_user.id
         )
-        await message.answer_animation(links['gif'], caption=links['caption'])
+        if os.path.splitext(links['image'])[1] == '.gif':
+            await message.answer_video(
+                await gif_to_mp4(links['image']), caption=links['caption'])
+            # await message.answer_animation(
+            #     links['image'], caption=links['caption'])
+        else:
+            await message.answer_photo(
+                links['image'], caption=links['caption'])
         await msg.delete()
     else:
         logger.debug('There are links, sending a message with buttons')

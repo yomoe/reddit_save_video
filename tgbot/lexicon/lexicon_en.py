@@ -20,7 +20,7 @@ DOWNLOADING_VIDEO = 'I\'m downloading video'
 
 SENDING_VIDEO = 'I\'m sending video'
 
-SENDING_GIF = 'I\'m sending gif'
+SENDING_IMAGE = 'I\'m sending image'
 
 SENDING_REDGIFS = 'I\'m sending redgifs'
 
