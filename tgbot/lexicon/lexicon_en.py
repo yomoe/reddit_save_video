@@ -22,6 +22,8 @@ SENDING_VIDEO = 'I\'m sending video'
 
 SENDING_IMAGE = 'I\'m sending image'
 
+SENDING_GALLERY = 'I\'m sending gallery'
+
 SENDING_REDGIFS = 'I\'m sending redgifs'
 
 SEND_VIDEO_CANCEL = 'Send video cancel by user'

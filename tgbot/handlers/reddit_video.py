@@ -9,7 +9,7 @@ import aiohttp
 import ffmpeg
 import requests
 from aiogram import Dispatcher, types
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, InputMediaPhoto
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 
@@ -193,7 +193,8 @@ async def get_links(url: str) -> dict:
         return find_json
 
     def get_caption(res_json):
-        return res_json[0]['data'].get('children', [{}])[0]['data'].get('title')
+        return res_json[0]['data'].get('children', [{}])[0]['data'].get(
+            'title')
 
     def is_image(res_json):
         file = res_json[0]['data'].get('children', [{}])[0]['data'].get(
@@ -210,6 +211,12 @@ async def get_links(url: str) -> dict:
         try:
             return 'redgifs.com' in get_find_json(res_json).get('media').get(
                 'type')
+        except AttributeError:
+            return False
+
+    def is_gallery(res_json):
+        try:
+            return get_find_json(res_json).get('is_gallery')
         except AttributeError:
             return False
 
@@ -265,6 +272,18 @@ async def get_links(url: str) -> dict:
             video_link['redgifs'] = redgifs_url
             video_link['caption'] = get_caption(res_json)
             return video_link
+
+        if is_gallery(res_json):
+            gallery_data = get_find_json(res_json).get('gallery_data', {})
+            media_metadata = get_find_json(res_json).get('media_metadata', {})
+            photos = [
+                InputMediaPhoto(
+                    media_metadata.get(item['media_id'], {}).get('s', {}).get(
+                        'u').replace('&amp;', '&'),
+                    caption=get_caption(res_json)
+                ) for item in gallery_data.get('items', [])
+            ]
+            return {'gallery': photos}
         return {}
     except (
             json.JSONDecodeError,
@@ -274,11 +293,15 @@ async def get_links(url: str) -> dict:
         return {}
 
 
+def chunks(gallery, count):
+    for i in range(0, len(gallery), count):
+        yield gallery[i:i + count]
+
+
 async def bot_get_links_private(message: types.Message) -> None:
     """Send a message with buttons to download the video"""
     msg = await message.answer(en.GET_LINKS_FOR_VIDEO)
     links = await get_links(message.text)
-    print(links)
     if not links:
         logger.debug('The links dictionary is empty, sending an error message')
         await msg.edit_text(en.VIDEO_NOT_FOUND)
@@ -305,11 +328,23 @@ async def bot_get_links_private(message: types.Message) -> None:
         if os.path.splitext(links['image'])[1] == '.gif':
             await message.answer_video(
                 await gif_to_mp4(links['image']), caption=links['caption'])
-            # await message.answer_animation(
-            #     links['image'], caption=links['caption'])
         else:
             await message.answer_photo(
                 links['image'], caption=links['caption'])
+        await msg.delete()
+    elif 'gallery' in links:
+        await msg.edit_text(en.SENDING_GALLERY)
+        logger.info(
+            'Send gallery to user %s, id %s',
+            message.from_user.full_name,
+            message.from_user.id
+        )
+        gallery = links['gallery']
+        for chunk in chunks(gallery, 10):
+            if len(chunk) >= 2:
+                await message.answer_media_group(chunk)
+            else:
+                await message.answer_photo(chunk[0].media)
         await msg.delete()
     else:
         logger.debug('There are links, sending a message with buttons')
@@ -393,22 +428,42 @@ async def bot_get_links_group(message: types.Message) -> None:
             await msg.edit_text(en.VIDEO_NOT_FOUND)
         else:
             logger.info(
-                'Sending gif for chat %s, %s id %s',
+                'Sending redgifs for chat %s, %s id %s',
                 message.chat.title,
                 message.chat.type,
                 message.chat.id
             )
             await message.answer_video(video, caption=links['caption'])
             await msg.delete()
-    elif 'gif' in links:
-        await msg.edit_text(en.SENDING_GIF)
+    elif 'image' in links:
+        await msg.edit_text(en.SENDING_IMAGE)
         logger.info(
-            'Sending gif for chat %s, %s id %s',
+            'Sending image for chat %s, %s id %s',
             message.chat.title,
             message.chat.type,
             message.chat.id
         )
-        await message.answer_animation(links['gif'], caption=links['caption'])
+        if os.path.splitext(links['image'])[1] == '.gif':
+            await message.answer_video(
+                await gif_to_mp4(links['image']), caption=links['caption'])
+        else:
+            await message.answer_photo(
+                links['image'], caption=links['caption'])
+        await msg.delete()
+    elif 'gallery' in links:
+        await msg.edit_text(en.SENDING_GALLERY)
+        logger.info(
+            'Sending gallery for chat %s, %s id %s',
+            message.chat.title,
+            message.chat.type,
+            message.chat.id
+        )
+        gallery = links['gallery']
+        for chunk in chunks(gallery, 10):
+            if len(chunk) >= 2:
+                await message.answer_media_group(chunk)
+            else:
+                await message.answer_photo(chunk[0].media)
         await msg.delete()
     else:
         try:
