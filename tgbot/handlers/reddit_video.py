@@ -196,6 +196,9 @@ async def get_links(url: str) -> dict:
         return res_json[0]['data'].get('children', [{}])[0]['data'].get(
             'title')
 
+    def is_deleted(res_json):
+        return get_find_json(res_json).get('removed_by_category') == 'deleted'
+
     def is_image(res_json):
         file = res_json[0]['data'].get('children', [{}])[0]['data'].get(
             'post_hint', [{}])
@@ -230,6 +233,9 @@ async def get_links(url: str) -> dict:
     try:
         res_json = res.json()
         video_link = {}
+        if is_deleted(res_json):
+            return {'error': 'Deleted'}
+
         if 'reddit_video_preview' in res.text:
             find_json = get_find_json(res_json).get('preview', {}).get(
                 'reddit_video_preview', {})
@@ -303,8 +309,12 @@ async def bot_get_links_private(message: types.Message) -> None:
     msg = await message.answer(en.GET_LINKS_FOR_VIDEO)
     links = await get_links(message.text)
     if not links:
-        logger.debug('The links dictionary is empty, sending an error message')
+        logger.info('The links dictionary is empty, sending an error message')
         await msg.edit_text(en.VIDEO_NOT_FOUND)
+    elif 'error' in links:
+        if links['error'] == 'Deleted':
+            logger.info('Video deleted, sending an error message')
+            await msg.edit_text(en.SOURCE_DELETED)
     elif 'redgifs' in links:
         await msg.edit_text(en.SENDING_REDGIFS)
         video = await get_redgifs(links['redgifs'])
@@ -417,10 +427,14 @@ async def bot_get_links_group(message: types.Message) -> None:
     msg = await message.answer(text=en.GET_LINKS_FOR_VIDEO)
     links = await get_links(message.text)
     if not links:
-        logger.debug(
+        logger.info(
             'The dictionary of links is empty, sending an error message.'
         )
         await msg.edit_text(en.VIDEO_NOT_FOUND)
+    elif 'error' in links:
+        if links['error'] == 'Deleted':
+            logger.info('Video deleted, sending an error message')
+            await msg.edit_text(en.SOURCE_DELETED)
     elif 'redgifs' in links:
         await msg.edit_text(en.SENDING_REDGIFS)
         video = await get_redgifs(links['redgifs'])

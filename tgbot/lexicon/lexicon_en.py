@@ -30,3 +30,5 @@ SENDING_REDGIFS = 'I\'m sending redgifs'
 SEND_VIDEO_CANCEL = 'Send video cancel by user'
 
 FAILED_TO_SEND_VIDEO = 'Failed to send video'
+
+SOURCE_DELETED = 'This post was deleted'
