@@ -286,8 +286,8 @@ async def get_links(url: str) -> dict:
                 InputMediaPhoto(
                     media_metadata.get(item['media_id'], {}).get('s', {}).get(
                         'u').replace('&amp;', '&'),
-                    caption=get_caption(res_json)
-                ) for item in gallery_data.get('items', [])
+                    caption=get_caption(res_json) if i == 0 else None,
+                ) for i, item in enumerate(gallery_data.get('items', []))
             ]
             return {'gallery': photos}
         return {}
