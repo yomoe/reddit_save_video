@@ -32,7 +32,7 @@ services:
     working_dir: "/app/redditbot"
     volumes:
     - .:/app/redditbot/
-    command: python3 -m bot
+    command: python -m bot
     restart: always
     networks:
     - tg_bot
