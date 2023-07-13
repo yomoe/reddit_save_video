@@ -8,8 +8,9 @@ services:
     container_name: redditbot-container
     env_file: .env
     image: ${DOCKER_LOGIN}/redditbot
+    command: python3 -m bot
     restart: always
     volumes:
       - bot_data:/app/
     environment:
-      TZ: Asia/Shanghai
+      TZ: ${TIME_ZONE}
