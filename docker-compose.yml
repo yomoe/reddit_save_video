@@ -31,7 +31,7 @@ services:
       context: .
     working_dir: "/usr/src/app/${BOT_NAME:-tg_bot}"
     volumes:
-    - .:/usr/src/app/${BOT_NAME:-tg_bot}
+    - .:/app/
     command: python3 -m bot
     restart: always
     networks:

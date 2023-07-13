@@ -1,11 +1,15 @@
-FROM python:3.9-buster
+FROM python:3.11-buster
 ENV BOT_NAME=$BOT_NAME
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
-RUN apt -y update && \
+RUN apt-get update &&\
+    apt-get upgrade -y &&\
+    apt-get clean &&\
+    apt-get autoremove -y &&\
+    rm -rf /var/lib/apt/lists/* && \
     apt install -y ffmpeg
-WORKDIR /usr/src/app/"${BOT_NAME:-tg_bot}"
-COPY requirements.txt /usr/src/app/"${BOT_NAME:-tg_bot}"
-RUN pip install -r /usr/src/app/"${BOT_NAME:-tg_bot}"/requirements.txt
-COPY . /usr/src/app/"${BOT_NAME:-tg_bot}"
+WORKDIR /app/"${BOT_NAME:-tg_bot}"
+COPY requirements.txt /app/"${BOT_NAME:-tg_bot}"
+RUN pip install -r /app/"${BOT_NAME:-tg_bot}"/requirements.txt
+COPY . /app/"${BOT_NAME:-tg_bot}"

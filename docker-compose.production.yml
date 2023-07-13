@@ -4,39 +4,12 @@ volumes:
   bot_data:
 
 services:
-#  db:
-#    image: postgres
-#    container_name: database
-#    restart: always
-#    env_file:
-#      - ".env"
-#    environment:
-#      POSTGRES_PASSWORD: $PG_PASSWORD
-#    ports:
-#      - 5432:5432
-#    networks:
-#    - tg_bot
-#    volumes:
-#      - ./db:/var/lib/postgresql
-#    depends_on:
-#      - db
-#  adminer:
-#      image: adminer
-#      restart: always
-#      ports:
-#        - 8081:8080
-  bot:
-    image:  ${DOCKER_LOGIN}/redditbot:latest
+  redditbot:
+    container_name: redditbot-container
     env_file: .env
-    stop_signal: SIGINT
-    volumes:
-    - bot_data:/usr/src/app/${BOT_NAME:-tg_bot}
+    image: ${DOCKER_LOGIN}/redditbot
     restart: always
-    networks:
-    - tg_bot
+    volumes:
+      - bot_data:/app/
     environment:
-      TZ: ${TIME_ZONE}
-
-networks:
-  tg_bot:
-    driver: bridge
+      TZ: Asia/Shanghai
