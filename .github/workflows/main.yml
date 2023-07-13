@@ -37,6 +37,7 @@ jobs:
           source: "docker-compose.production.yml"
           target: "redditbot"
       - name: Executing remote ssh commands to deploy
+        id: deploy_step
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.HOST }}
@@ -54,5 +55,4 @@ jobs:
           to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: |
-            ${{ steps.deploy.outcome == 'success' && 'Деплой успешно выполнен!' || 'Деплой не удался. Проверьте логи.' }}
-
+            ${{ steps.deploy_step.outcome == 'success' && 'Деплой успешно выполнен!' || 'Деплой не удался. Проверьте логи.' }}
