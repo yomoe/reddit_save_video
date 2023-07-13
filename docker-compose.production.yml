@@ -1,5 +1,8 @@
 version: '3.9'
 
+volumes:
+  bot_data:
+
 services:
 #  db:
 #    image: postgres
@@ -23,21 +26,16 @@ services:
 #      ports:
 #        - 8081:8080
   bot:
-    image: "${BOT_IMAGE_NAME:-tg_bot-image}"
+    image:  ${DOCKER_LOGIN}/redditbot
+    env_file: .env
     stop_signal: SIGINT
-    env_file:
-      - ".env"
-    build:
-      context: .
-    working_dir: "/usr/src/app/${BOT_NAME:-tg_bot}"
     volumes:
-    - .:/usr/src/app/${BOT_NAME:-tg_bot}
-    command: python3 -m bot
+    - bot_data:/usr/src/app/${BOT_NAME:-tg_bot}
     restart: always
     networks:
     - tg_bot
     environment:
-      TZ: Asia/Shanghai
+      TZ: ${TZ}
 
 networks:
   tg_bot:
