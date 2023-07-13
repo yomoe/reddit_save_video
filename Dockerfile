@@ -4,10 +4,6 @@ ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
 RUN apt-get update &&\
-    apt-get upgrade -y &&\
-    apt-get clean &&\
-    apt-get autoremove -y &&\
-    rm -rf /var/lib/apt/lists/* && \
     apt install -y ffmpeg
 WORKDIR /app/"${BOT_NAME:-tg_bot}"
 COPY requirements.txt /app/"${BOT_NAME:-tg_bot}"
