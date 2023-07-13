@@ -29,15 +29,15 @@ services:
       - ".env"
     build:
       context: .
-    working_dir: "/app/${BOT_NAME:-tg_bot}"
+    working_dir: "/app/redditbot"
     volumes:
-    - .:/app/
+    - .:/app/redditbot/
     command: python3 -m bot
     restart: always
     networks:
     - tg_bot
     environment:
-      TZ: Asia/Shanghai
+      TZ: ${TIME_ZONE}
 
 networks:
   tg_bot:

@@ -1,11 +1,10 @@
-FROM python:3.11-buster
-ENV BOT_NAME=$BOT_NAME
-ENV LANG=C.UTF-8
-ENV LC_ALL=C.UTF-8
+FROM python:3.11.4-slim-buster
 
-RUN apt-get update &&\
-    apt install -y ffmpeg
-WORKDIR /app/"${BOT_NAME:-tg_bot}"
-COPY requirements.txt /app/"${BOT_NAME:-tg_bot}"
-RUN pip install -r /app/"${BOT_NAME:-tg_bot}"/requirements.txt
-COPY . /app/"${BOT_NAME:-tg_bot}"
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y ffmpeg libpq-dev gcc python3-dev && \
+    apt-get clean && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/redditbot/
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
