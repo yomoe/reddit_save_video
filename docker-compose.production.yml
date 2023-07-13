@@ -1,0 +1,44 @@
+version: '3.9'
+
+services:
+#  db:
+#    image: postgres
+#    container_name: database
+#    restart: always
+#    env_file:
+#      - ".env"
+#    environment:
+#      POSTGRES_PASSWORD: $PG_PASSWORD
+#    ports:
+#      - 5432:5432
+#    networks:
+#    - tg_bot
+#    volumes:
+#      - ./db:/var/lib/postgresql
+#    depends_on:
+#      - db
+#  adminer:
+#      image: adminer
+#      restart: always
+#      ports:
+#        - 8081:8080
+  bot:
+    image: "${BOT_IMAGE_NAME:-tg_bot-image}"
+    stop_signal: SIGINT
+    env_file:
+      - ".env"
+    build:
+      context: .
+    working_dir: "/usr/src/app/${BOT_NAME:-tg_bot}"
+    volumes:
+    - .:/usr/src/app/${BOT_NAME:-tg_bot}
+    command: python3 -m bot
+    restart: always
+    networks:
+    - tg_bot
+    environment:
+      TZ: Asia/Shanghai
+
+networks:
+  tg_bot:
+    driver: bridge
