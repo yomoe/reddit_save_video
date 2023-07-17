@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import re
-import tempfile
+import aiofiles
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import aiohttp
@@ -41,14 +41,12 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
         response.raise_for_status()
         audio_response = await response.read()
 
-    with tempfile.NamedTemporaryFile(
-            delete=False) as video_file, tempfile.NamedTemporaryFile(
-        delete=False) as audio_file, tempfile.NamedTemporaryFile(
-        suffix='.mp4',
-        delete=False
-    ) as output_file:
-        video_file.write(video_response)
-        audio_file.write(audio_response)
+    video_file = await aiofiles.tempfile.NamedTemporaryFile(delete=False)
+    audio_file = await aiofiles.tempfile.NamedTemporaryFile(delete=False)
+    output_file = await aiofiles.tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+
+    await video_file.write(video_response)
+    await audio_file.write(audio_response)
 
     input_video = ffmpeg.input(video_file.name)
     input_audio = ffmpeg.input(audio_file.name)
@@ -59,8 +57,8 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
         .run(quiet=True, overwrite_output=True)
     )
 
-    with open(output_file.name, 'rb') as ready_file:
-        output_data = ready_file.read()
+    async with aiofiles.open(output_file.name, 'rb') as ready_file:
+        output_data = await ready_file.read()
 
     os.remove(video_file.name)
     os.remove(audio_file.name)
@@ -74,14 +72,10 @@ async def gif_to_mp4(gif_link: str) -> bytes:
         response.raise_for_status()
         gif_response = await response.read()
 
-    with tempfile.NamedTemporaryFile(
-            suffix='.gif',
-            delete=False
-    ) as gif_file, tempfile.NamedTemporaryFile(
-        suffix='.mp4',
-        delete=False
-    ) as output_file:
-        gif_file.write(gif_response)
+    gif_file = await aiofiles.tempfile.NamedTemporaryFile(suffix='.gif', delete=False)
+    output_file = await aiofiles.tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+
+    await gif_file.write(gif_response)
 
     (
         ffmpeg
@@ -90,8 +84,8 @@ async def gif_to_mp4(gif_link: str) -> bytes:
         .run(quiet=True, overwrite_output=True)
     )
 
-    with open(output_file.name, 'rb') as ready_file:
-        output_data = ready_file.read()
+    async with aiofiles.open(output_file.name, 'rb') as ready_file:
+        output_data = await ready_file.read()
 
     os.remove(gif_file.name)
     os.remove(output_file.name)
@@ -115,7 +109,7 @@ async def get_redgifs(url_id: str) -> bytes or None:
         async with session.get(video_url, headers=HEADERS) as video:
             file_data = await video.read()
     except aiohttp.ClientError:
-        logger.exception('Error getting video from %s', url_id)
+        logger.exception('Error getting video from %s', video_url)
         return None
     return file_data
 
