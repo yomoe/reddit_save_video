@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -10,6 +11,7 @@ import ffmpeg
 import requests
 from aiogram import Dispatcher, types
 from aiogram.types import CallbackQuery, InputMediaPhoto
+from aiogram.utils.exceptions import RetryAfter
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 
@@ -342,20 +344,32 @@ async def bot_get_links_private(message: types.Message) -> None:
             await message.answer_photo(
                 links['image'], caption=links['caption'])
         await msg.delete()
+
     elif 'gallery' in links:
         await msg.edit_text(en.SENDING_GALLERY)
         logger.info(
-            'Send gallery to user %s, id %s',
-            message.from_user.full_name,
-            message.from_user.id
+            'Sending gallery for chat %s, %s id %s',
+            message.chat.title,
+            message.chat.type,
+            message.chat.id
         )
         gallery = links['gallery']
         for chunk in chunks(gallery, 10):
-            if len(chunk) >= 2:
-                await message.answer_media_group(chunk)
-            else:
-                await message.answer_photo(chunk[0].media)
+            try:
+                if len(chunk) >= 2:
+                    await message.answer_media_group(chunk)
+                else:
+                    await message.answer_photo(chunk[0].media)
+            except RetryAfter as e:
+                sleep_time = e.timeout
+                await asyncio.sleep(sleep_time)
+                # Повторите попытку после времени ожидания
+                if len(chunk) >= 2:
+                    await message.answer_media_group(chunk)
+                else:
+                    await message.answer_photo(chunk[0].media)
         await msg.delete()
+
     else:
         logger.debug('There are links, sending a message with buttons')
         nsfw = links.pop('nsfw', None)
@@ -474,10 +488,19 @@ async def bot_get_links_group(message: types.Message) -> None:
         )
         gallery = links['gallery']
         for chunk in chunks(gallery, 10):
-            if len(chunk) >= 2:
-                await message.answer_media_group(chunk)
-            else:
-                await message.answer_photo(chunk[0].media)
+            try:
+                if len(chunk) >= 2:
+                    await message.answer_media_group(chunk)
+                else:
+                    await message.answer_photo(chunk[0].media)
+            except RetryAfter as e:
+                sleep_time = e.timeout
+                await asyncio.sleep(sleep_time)
+                # Повторите попытку после времени ожидания
+                if len(chunk) >= 2:
+                    await message.answer_media_group(chunk)
+                else:
+                    await message.answer_photo(chunk[0].media)
         await msg.delete()
     else:
         try:
