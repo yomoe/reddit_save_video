@@ -18,6 +18,9 @@ from fake_useragent import UserAgent
 from tgbot.keyboards.inline import create_inline_kb
 from tgbot.lexicon import lexicon_en as en
 
+# Create a global session
+session = aiohttp.ClientSession()
+
 logger = logging.getLogger(__name__)
 
 users: dict = {}
@@ -31,14 +34,12 @@ API_URL_REDGIFS = 'https://api.redgifs.com/v1/gifs/'
 
 async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
     """Concatenate video with audio and return the result."""
-    async with aiohttp.ClientSession(headers=HEADERS) as session:
-        async with session.get(video_link) as response:
-            response.raise_for_status()
-            video_response = await response.read()
-    async with aiohttp.ClientSession(headers=HEADERS) as session:
-        async with session.get(audio_link) as response:
-            response.raise_for_status()
-            audio_response = await response.read()
+    async with session.get(video_link, headers=HEADERS) as response:
+        response.raise_for_status()
+        video_response = await response.read()
+    async with session.get(audio_link, headers=HEADERS) as response:
+        response.raise_for_status()
+        audio_response = await response.read()
 
     with tempfile.NamedTemporaryFile(
             delete=False) as video_file, tempfile.NamedTemporaryFile(
@@ -69,10 +70,9 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
 
 async def gif_to_mp4(gif_link: str) -> bytes:
     """Convert gif to mp4 and return the result."""
-    async with aiohttp.ClientSession(headers=HEADERS) as session:
-        async with session.get(gif_link) as response:
-            response.raise_for_status()
-            gif_response = await response.read()
+    async with session.get(gif_link, headers=HEADERS) as response:
+        response.raise_for_status()
+        gif_response = await response.read()
 
     with tempfile.NamedTemporaryFile(
             suffix='.gif',
@@ -100,39 +100,37 @@ async def gif_to_mp4(gif_link: str) -> bytes:
 
 async def get_redgifs(url_id: str) -> bytes or None:
     """Get the video from redgifs.com."""
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(API_URL_REDGIFS + url_id) as response:
-                redgifs_json = await response.json()
-                video_url = (redgifs_json.get('gif', {}).get('urls', {}).get(
-                    'hd') or redgifs_json.get('gfyItem', {}).get(
-                    'content_urls', {}).get(
-                    'mp4', {}).get(
-                    'url'))
-        except (aiohttp.ClientError, json.JSONDecodeError):
-            logger.exception('Error getting json from %s', url_id)
-            return None
-        try:
-            async with session.get(video_url) as video:
-                file_data = await video.read()
-        except aiohttp.ClientError:
-            logger.exception('Error getting video from %s', url_id)
-            return None
-        return file_data
+    try:
+        async with session.get(API_URL_REDGIFS + url_id, headers=HEADERS) as response:
+            redgifs_json = await response.json()
+            video_url = (redgifs_json.get('gif', {}).get('urls', {}).get(
+                'hd') or redgifs_json.get('gfyItem', {}).get(
+                'content_urls', {}).get(
+                'mp4', {}).get(
+                'url'))
+    except (aiohttp.ClientError, json.JSONDecodeError):
+        logger.exception('Error getting json from %s', url_id)
+        return None
+    try:
+        async with session.get(video_url, headers=HEADERS) as video:
+            file_data = await video.read()
+    except aiohttp.ClientError:
+        logger.exception('Error getting video from %s', url_id)
+        return None
+    return file_data
 
 
 async def size_file(url: str) -> float:
     """Get the size of the file."""
     logger.debug('Try get size file %s', url)
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.head(url, headers=HEADERS) as response:
-                response.raise_for_status()
-                size = round(
-                    int(response.headers['Content-Length']) / 1024 / 1024, 1
-                )
-                logger.debug('File size: %s MB', size)
-                return size
+        async with session.head(url, headers=HEADERS) as response:
+            response.raise_for_status()
+            size = round(
+                int(response.headers['Content-Length']) / 1024 / 1024, 1
+            )
+            logger.debug('File size: %s MB', size)
+            return size
     except requests.exceptions.RequestException as error:
         logger.exception('Request to %s failed: %s', url, error)
         return 0.0
@@ -392,10 +390,9 @@ async def download_video(video_link: str, audio_link: str) -> bytes:
     if audio_link != 'false':
         video_content = await concat_video_audio(video_link, audio_link)
     else:
-        async with aiohttp.ClientSession(headers=HEADERS) as session:
-            async with session.get(video_link) as response:
-                response.raise_for_status()
-                video_content = await response.read()
+        async with session.get(video_link, headers=HEADERS) as response:
+            response.raise_for_status()
+            video_content = await response.read()
     return video_content
 
 
@@ -434,6 +431,9 @@ async def bot_send_video(callback: CallbackQuery) -> None:
     except aiohttp.ClientConnectionError as error:
         logging.exception('Failed to send video: %s', error)
         await callback.message.answer(en.FAILED_TO_SEND_VIDEO)
+
+    finally:
+        await session.close()
 
 
 async def bot_get_links_group(message: types.Message) -> None:
@@ -537,6 +537,7 @@ async def bot_get_links_group(message: types.Message) -> None:
         except aiohttp.ClientConnectionError as error:
             logging.exception('Failed to send video: %s', error)
             await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
+    await session.close()
 
 
 async def bot_send_video_cancel(callback: CallbackQuery) -> None:
