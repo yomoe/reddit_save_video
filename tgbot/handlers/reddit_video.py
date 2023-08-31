@@ -19,7 +19,7 @@ from fake_useragent import UserAgent
 from tgbot.keyboards.inline import create_inline_kb
 from tgbot.lexicon import lexicon_en as en
 
-# Create a global session
+# Create a global sessions
 session = aiohttp.ClientSession()
 
 logger = logging.getLogger(__name__)
