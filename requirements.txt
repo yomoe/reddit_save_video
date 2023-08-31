@@ -11,4 +11,3 @@ lxml~=4.9.2
 aiohttp~=3.8.3
 ffmpeg-python~=0.2.0
 aiofiles~=23.1.0
-ffprobe-python~=1.0.3

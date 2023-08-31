@@ -8,7 +8,6 @@ from urllib.parse import urljoin, urlparse, urlunparse
 
 import aiohttp
 import ffmpeg
-import ffprobe
 import requests
 from aiogram import Dispatcher, types
 from aiogram.types import CallbackQuery, InputMediaPhoto
@@ -33,11 +32,6 @@ HEADERS = {
 API_URL_REDGIFS = 'https://api.redgifs.com/v1/gifs/'
 
 
-def get_video_metadata(video_file_path):
-    probe = ffprobe.FFProbe(video_file_path)
-    return next((stream for stream in probe.streams if stream.is_video()), None)  # return metadata of the video stream
-
-
 async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
     """Concatenate video with audio and return the result."""
     async with session.get(video_link, headers=HEADERS) as response:
@@ -54,15 +48,12 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
     await video_file.write(video_response)
     await audio_file.write(audio_response)
 
-    video_stream = get_video_metadata(video_file.name)
-
     input_video = ffmpeg.input(video_file.name)
     input_audio = ffmpeg.input(audio_file.name)
     (
         ffmpeg
         .concat(input_video, input_audio, v=1, a=1)
-        .filter('fps', fps=video_stream.frames_rate.num, round='up')
-        .output(output_file.name, format='mp4', vcodec='libx264', acodec='aac', vf=f"scale=-1:{video_stream.width}")
+        .output(output_file.name)
         .run(quiet=True, overwrite_output=True)
     )
 
