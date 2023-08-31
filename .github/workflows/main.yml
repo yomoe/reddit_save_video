@@ -55,4 +55,7 @@ jobs:
           to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: |
+            📦 Проект: ${{ github.repository }}
+            🌐 Ссылка: ${{ github.repositoryUrl }}
+            🧟‍♂️ Автор: ${{ github.actor }}
             ${{ steps.deploy_step.outcome == 'success' && '🟢 Деплой успешно выполнен!' || '🔴 Деплой не удался. Проверьте логи.' }}
