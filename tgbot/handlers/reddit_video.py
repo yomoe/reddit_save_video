@@ -123,7 +123,7 @@ async def get_redgifs(url_id: str) -> bytes or None:
     return file_data
 
 
-async def size_file(url: str) -> float:
+async def size_file(session: aiohttp.ClientSession, url: str) -> float:
     """Get the size of the file."""
     logger.debug('Try get size file %s', url)
     try:
@@ -134,7 +134,7 @@ async def size_file(url: str) -> float:
             )
             logger.debug('File size: %s MB', size)
             return size
-    except requests.exceptions.RequestException as error:
+    except aiohttp.ClientError as error:  # Используйте правильный тип исключения
         logger.exception('Request to %s failed: %s', url, error)
         return 0.0
 
