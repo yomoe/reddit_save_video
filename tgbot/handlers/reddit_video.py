@@ -324,7 +324,8 @@ async def bot_get_links_private(message: types.Message) -> None:
             await msg.edit_text(en.VIDEO_NOT_FOUND)
         else:
             logger.info(
-                'Send redgifs to user %s, id %s',
+                'Send redgifs to user %s (%s) id %s',
+                message.from_user.username,
                 message.from_user.full_name,
                 message.from_user.id
             )
@@ -333,7 +334,8 @@ async def bot_get_links_private(message: types.Message) -> None:
     elif 'image' in links:
         await msg.edit_text(en.SENDING_IMAGE)
         logger.info(
-            'Send is_image to user %s, id %s',
+            'Send is_image to user %s (%s) id %s',
+            message.from_user.username,
             message.from_user.full_name,
             message.from_user.id
         )
@@ -347,7 +349,8 @@ async def bot_get_links_private(message: types.Message) -> None:
     elif 'gallery' in links:
         await msg.edit_text(en.SENDING_GALLERY)
         logger.info(
-            'Send gallery to user %s, id %s',
+            'Send gallery to user %s (%s) id %s',
+            message.from_user.username,
             message.from_user.full_name,
             message.from_user.id
         )
@@ -397,7 +400,8 @@ async def bot_send_video(callback: CallbackQuery) -> None:
         video_content = await download_video(video_link, audio_link)
         await callback.message.edit_text(text=en.SENDING_VIDEO)
         logger.info(
-            'Send video to user %s, id %s',
+            'Send video to user %s (%s) id %s',
+            callback.from_user.username,
             callback.from_user.full_name,
             callback.from_user.id
         )
