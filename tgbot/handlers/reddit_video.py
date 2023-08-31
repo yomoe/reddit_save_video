@@ -164,6 +164,8 @@ async def parse_xml(xml: str, url: str) -> dict:
 def clear_url(url):
     """Delete parameters from link and change link to json link"""
     try:
+        response = requests.get(url, allow_redirects=True)
+        url = response.url
         parsed_url = urlparse(url)._replace(query='', fragment='')
         url = urlunparse(parsed_url)
         logger.debug('Extracted URL: %s', parsed_url)
@@ -559,6 +561,9 @@ def register_get_links(dp: Dispatcher) -> None:
     dp.register_message_handler(
         bot_get_links_private, text_startswith=['https://www.reddit.com/r/'],
         chat_type=types.ChatType.PRIVATE)
+    dp.register_message_handler(
+        bot_get_links_private, text_startswith=['https://reddit.com/r/'],
+        chat_type=types.ChatType.PRIVATE)
     dp.register_callback_query_handler(
         bot_send_video, text_endswith='mb',
         chat_type=types.ChatType.PRIVATE)
@@ -567,3 +572,5 @@ def register_get_links(dp: Dispatcher) -> None:
         chat_type=types.ChatType.PRIVATE)
     dp.register_message_handler(
         bot_get_links_group, text_startswith=['https://www.reddit.com/r/'])
+    dp.register_message_handler(
+        bot_get_links_group, text_startswith=['https://reddit.com/r/'])

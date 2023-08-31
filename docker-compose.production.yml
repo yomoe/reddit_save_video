@@ -1,8 +1,5 @@
 version: '3.9'
 
-volumes:
-  bot_data:
-
 services:
   redditbot:
     container_name: redditbot-container
@@ -10,5 +7,3 @@ services:
     image: ${DOCKER_LOGIN}/redditbot
     command: python3 -m bot
     restart: always
-    volumes:
-      - bot_data:/app/
