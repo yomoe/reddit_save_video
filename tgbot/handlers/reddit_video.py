@@ -161,6 +161,8 @@ async def parse_xml(xml: str, url: str) -> dict:
 def clear_url(url):
     """Delete parameters from link and change link to json link"""
     try:
+        response = requests.get(url, allow_redirects=True)
+        url = response.url
         parsed_url = urlparse(url)._replace(query='', fragment='')
         url = urlunparse(parsed_url)
         logger.debug('Extracted URL: %s', parsed_url)
@@ -527,10 +529,20 @@ async def bot_send_video_cancel(callback: CallbackQuery) -> None:
         text=en.SEND_VIDEO_CANCEL)
 
 
+def text_startswith_list(prefix_list):
+    def filter_func(message):
+        return any(message.text.startswith(prefix) for prefix in prefix_list)
+
+    return filter_func
+
+
+reddit_prefixes = ['https://www.reddit.com/r/', 'https://reddit.com/r/']
+
+
 def register_get_links(dp: Dispatcher) -> None:
     """Register handlers for get links"""
     dp.register_message_handler(
-        bot_get_links_private, text_startswith=['https://www.reddit.com/r/'],
+        bot_get_links_private, text_startswith=text_startswith_list(reddit_prefixes),
         chat_type=types.ChatType.PRIVATE)
     dp.register_callback_query_handler(
         bot_send_video, text_endswith='mb',
@@ -539,4 +551,4 @@ def register_get_links(dp: Dispatcher) -> None:
         bot_send_video_cancel, text_endswith='cancel',
         chat_type=types.ChatType.PRIVATE)
     dp.register_message_handler(
-        bot_get_links_group, text_startswith=['https://www.reddit.com/r/'])
+        bot_get_links_group, text_startswith=text_startswith_list(reddit_prefixes))
