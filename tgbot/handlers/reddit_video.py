@@ -536,10 +536,7 @@ async def bot_send_video_cancel(callback: CallbackQuery) -> None:
 def register_get_links(dp: Dispatcher) -> None:
     """Register handlers for get links"""
     dp.register_message_handler(
-        bot_get_links_private, text_startswith=['https://www.reddit.com/r/'],
-        chat_type=types.ChatType.PRIVATE)
-    dp.register_message_handler(
-        bot_get_links_private, text_startswith=['https://reddit.com/r/'],
+        bot_get_links_private, text_startswith=re.compile(r'https://(www\.)?reddit\.com/r/'),
         chat_type=types.ChatType.PRIVATE)
     dp.register_callback_query_handler(
         bot_send_video, text_endswith='mb',
