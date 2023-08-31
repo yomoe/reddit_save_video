@@ -545,6 +545,4 @@ def register_get_links(dp: Dispatcher) -> None:
         bot_send_video_cancel, text_endswith='cancel',
         chat_type=types.ChatType.PRIVATE)
     dp.register_message_handler(
-        bot_get_links_group, text_startswith=['https://www.reddit.com/r/'])
-    dp.register_message_handler(
-        bot_get_links_group, text_startswith=['https://reddit.com/r/'])
+        bot_get_links_group, regexp='https://(www\.)?reddit\.com/r/')
