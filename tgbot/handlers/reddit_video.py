@@ -44,7 +44,7 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
             video_file.write(video_response)
             audio_file.write(audio_response)
 
-            logger.info(f"Created temp files: {video_file.name}, {audio_file.name}")
+            logger.debug(f"Created temp files: {video_file.name}, {audio_file.name}")
 
         input_video = ffmpeg.input(video_file.name)
         input_audio = ffmpeg.input(audio_file.name)
@@ -56,7 +56,7 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
             .run(quiet=True, overwrite_output=True)
         )
 
-        logger.info(f"Concatenation completed: {output_file.name}")
+        logger.debug(f"Concatenation completed: {output_file.name}")
 
         with open(output_file.name, 'rb') as ready_file:
             output_data = ready_file.read()
@@ -238,8 +238,11 @@ async def get_links(url: str) -> dict:
         max_resol = fallback_url.split('_')[1].split('.')[0]
         max_resol_link = urljoin(fallback_url, urlparse(fallback_url).path)
         size = await size_file(max_resol_link)
-        dict_video[f'{max_resol}p {size:.1f}mb'] = max_resol_link
-        return dict_video
+        if size < 50:
+            dict_video[f'{max_resol}p {size:.1f}mb'] = max_resol_link
+            return dict_video
+        else:
+            pass
 
     try:
         res_json = res.json()
