@@ -155,8 +155,7 @@ async def parse_xml(xml: str, url: str) -> dict:
             audio = url + base_url
             video_links['audio'] = audio
         elif content_type == 'video':
-            videos = [x.text for x in adaptation_set.find_all('BaseURL') if
-                      'DASH_2' not in x.text]
+            videos = [x.text for x in adaptation_set.find_all('BaseURL')]
             for video in videos:
                 resolution = video.split('_')[1].split('.')[0]
                 link = url + video
