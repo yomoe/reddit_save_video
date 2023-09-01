@@ -53,7 +53,7 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
             ffmpeg
             .concat(input_video, input_audio, v=1, a=1)
             .output(output_file.name)
-            .run(quiet=False, overwrite_output=True)
+            .run(quiet=True, overwrite_output=True)
         )
 
         logger.info(f"Concatenation completed: {output_file.name}")
@@ -161,7 +161,10 @@ async def parse_xml(xml: str, url: str) -> dict:
                 resolution = video.split('_')[1].split('.')[0]
                 link = url + video
                 size = await size_file(link)
-                video_links[f'{resolution}p {size}mb'] = link
+                if size < 50:
+                    video_links[f'{resolution}p {size}mb'] = link
+                else:
+                    pass
     return video_links
 
 
