@@ -28,41 +28,48 @@ API_URL_REDGIFS = 'https://api.redgifs.com/v1/gifs/'
 
 
 async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
-    """Concatenate video with audio and return the result."""
-    async with aiohttp.ClientSession(headers=HEADERS) as session:
-        async with session.get(video_link) as response:
-            response.raise_for_status()
-            video_response = await response.read()
-    async with aiohttp.ClientSession(headers=HEADERS) as session:
-        async with session.get(audio_link) as response:
-            response.raise_for_status()
-            audio_response = await response.read()
+    try:
+        async with aiohttp.ClientSession(headers=HEADERS) as session:
+            async with session.get(video_link) as response:
+                response.raise_for_status()
+                video_response = await response.read()
 
-    with tempfile.NamedTemporaryFile(
-            delete=False) as video_file, tempfile.NamedTemporaryFile(
-        delete=False) as audio_file, tempfile.NamedTemporaryFile(
-        suffix='.mp4',
-        delete=False
-    ) as output_file:
-        video_file.write(video_response)
-        audio_file.write(audio_response)
+        async with aiohttp.ClientSession(headers=HEADERS) as session:
+            async with session.get(audio_link) as response:
+                response.raise_for_status()
+                audio_response = await response.read()
 
-    input_video = ffmpeg.input(video_file.name)
-    input_audio = ffmpeg.input(audio_file.name)
-    (
-        ffmpeg
-        .concat(input_video, input_audio, v=1, a=1)
-        .output(output_file.name)
-        .run(quiet=True, overwrite_output=True)
-    )
+        with tempfile.NamedTemporaryFile(delete=False) as video_file, tempfile.NamedTemporaryFile(
+                delete=False) as audio_file, tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as output_file:
+            video_file.write(video_response)
+            audio_file.write(audio_response)
 
-    with open(output_file.name, 'rb') as ready_file:
-        output_data = ready_file.read()
+            logger.info(f"Created temp files: {video_file.name}, {audio_file.name}")
 
-    os.remove(video_file.name)
-    os.remove(audio_file.name)
-    os.remove(output_file.name)
-    return output_data
+        input_video = ffmpeg.input(video_file.name)
+        input_audio = ffmpeg.input(audio_file.name)
+
+        (
+            ffmpeg
+            .concat(input_video, input_audio, v=1, a=1)
+            .output(output_file.name)
+            .run(quiet=True, overwrite_output=True)
+        )
+
+        logger.info(f"Concatenation completed: {output_file.name}")
+
+        with open(output_file.name, 'rb') as ready_file:
+            output_data = ready_file.read()
+
+        os.remove(video_file.name)
+        os.remove(audio_file.name)
+        os.remove(output_file.name)
+
+        return output_data
+
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+        raise e
 
 
 async def gif_to_mp4(gif_link: str) -> bytes:
