@@ -53,7 +53,7 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
             ffmpeg
             .concat(input_video, input_audio, v=1, a=1)
             .output(output_file.name)
-            .run(quiet=True, overwrite_output=True)
+            .run(quiet=False, overwrite_output=True)
         )
 
         logger.info(f"Concatenation completed: {output_file.name}")
