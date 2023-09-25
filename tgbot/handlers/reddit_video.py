@@ -195,10 +195,9 @@ async def get_links(url: str) -> dict:
     and returns it as a dictionary.
     """
     links_url = clear_url(url)
-    if links_url:
-        res = requests.get(links_url, headers=HEADERS, timeout=10)
-        res.raise_for_status()
-        logger.debug('Response status code: %s', res.status_code)
+    res = requests.get(links_url, headers=HEADERS, timeout=10)
+    res.raise_for_status()
+    logger.debug('Response status code: %s', res.status_code)
 
     def get_find_json(res_json):
         find_json = res_json[0]['data'].get('children', [{}])[0]['data']
