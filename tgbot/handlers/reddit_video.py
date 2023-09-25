@@ -136,7 +136,7 @@ async def size_file(url: str) -> float:
                 size = round(
                     int(response.headers['Content-Length']) / 1024 / 1024, 1
                 )
-                logger.info('File size: %s MB', size)
+                logger.debug('File size: %s MB', size)
                 return size
     except requests.exceptions.RequestException as error:
         logger.exception('Request to %s failed: %s', url, error)
@@ -160,7 +160,9 @@ async def parse_xml(xml: str, url: str) -> dict:
                 resolution = video.split('_')[1].split('.')[0]
                 link = url + video
                 size = await size_file(link)
+                logger.info('File size: %s MB', size)
                 if size < 50:
+                    logger.info(f'{resolution}p {size}mb')
                     video_links[f'{resolution}p {size}mb'] = link
                 else:
                     pass
@@ -241,7 +243,9 @@ async def get_links(url: str) -> dict:
         max_resol = fallback_url.split('_')[1].split('.')[0]
         max_resol_link = urljoin(fallback_url, urlparse(fallback_url).path)
         size = await size_file(max_resol_link)
+        logger.info('File size: %s MB', size)
         if size < 50:
+            logger.info(f'{max_resol}p {size:.1f}mb')
             dict_video[f'{max_resol}p {size:.1f}mb'] = max_resol_link
             return dict_video
         else:
