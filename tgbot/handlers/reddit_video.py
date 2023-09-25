@@ -186,7 +186,7 @@ def clear_url(url):
         return url_json
     except requests.exceptions.RequestException as error:
         logger.error('Request failed: %s', error)
-        return None  # Изменили возвращаемое значение на None
+        return None
 
 
 
