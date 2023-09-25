@@ -162,10 +162,8 @@ async def parse_xml(xml: str, url: str) -> dict:
                 size = await size_file(link)
                 logger.info('File size: %s MB', size)
                 if size < 50:
-                    logger.info(f'{resolution}p {size}mb')
                     video_links[f'{resolution}p {size}mb'] = link
-                else:
-                    pass
+    logger.info(video_links)
     return video_links
 
 
@@ -245,8 +243,8 @@ async def get_links(url: str) -> dict:
         size = await size_file(max_resol_link)
         logger.info('File size: %s MB', size)
         if size < 50:
-            logger.info(f'{max_resol}p {size:.1f}mb')
             dict_video[f'{max_resol}p {size:.1f}mb'] = max_resol_link
+        logger.info(dict_video)
         return dict_video
 
     try:
@@ -449,6 +447,7 @@ async def bot_get_links_group(message: types.Message) -> None:
     """Send video to a group or channel in the second-to-last quality"""
     msg = await message.answer(text=en.GET_LINKS_FOR_VIDEO)
     links = await get_links(message.text)
+    logger.info(links)
     if not links:
         logger.info(
             'The dictionary of links is empty, sending an error message.'
