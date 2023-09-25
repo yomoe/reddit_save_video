@@ -136,7 +136,7 @@ async def size_file(url: str) -> float:
                 size = round(
                     int(response.headers['Content-Length']) / 1024 / 1024, 1
                 )
-                logger.debug('File size: %s MB', size)
+                logger.info('File size: %s MB', size)
                 return size
     except requests.exceptions.RequestException as error:
         logger.exception('Request to %s failed: %s', url, error)
@@ -186,16 +186,19 @@ def clear_url(url):
         return url_json
     except requests.exceptions.RequestException as error:
         logger.error('Request failed: %s', error)
-        return {}
+        return None  # Изменили возвращаемое значение на None
+
 
 
 async def get_links(url: str) -> dict:
     """Extracts video information from a Reddit URL
     and returns it as a dictionary.
     """
-    res = requests.get(clear_url(url), headers=HEADERS, timeout=10)
-    res.raise_for_status()
-    logger.debug('Response status code: %s', res.status_code)
+    links_url = clear_url(url)
+    if links_url:
+        res = requests.get(links_url, headers=HEADERS, timeout=10)
+        res.raise_for_status()
+        logger.debug('Response status code: %s', res.status_code)
 
     def get_find_json(res_json):
         find_json = res_json[0]['data'].get('children', [{}])[0]['data']
