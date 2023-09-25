@@ -247,9 +247,7 @@ async def get_links(url: str) -> dict:
         if size < 50:
             logger.info(f'{max_resol}p {size:.1f}mb')
             dict_video[f'{max_resol}p {size:.1f}mb'] = max_resol_link
-            return dict_video
-        else:
-            pass
+        return dict_video
 
     try:
         res_json = res.json()
