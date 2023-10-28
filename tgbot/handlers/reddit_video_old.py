@@ -1,4 +1,3 @@
-from aiogram.dispatcher import FSMContext
 import json
 import logging
 import os
@@ -45,7 +44,7 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
             video_file.write(video_response)
             audio_file.write(audio_response)
 
-            logger.debug(f'Created temp files: {video_file.name}, {audio_file.name}')
+            logger.debug(f"Created temp files: {video_file.name}, {audio_file.name}")
 
         input_video = ffmpeg.input(video_file.name)
         input_audio = ffmpeg.input(audio_file.name)
@@ -190,6 +189,7 @@ def clear_url(url):
         return None
 
 
+
 async def get_links(url: str) -> dict:
     """Extracts video information from a Reddit URL
     and returns it as a dictionary.
@@ -320,11 +320,10 @@ def chunks(gallery, count):
         yield gallery[i:i + count]
 
 
-async def bot_get_links_private(message: types.Message, state: FSMContext) -> None:
+async def bot_get_links_private(message: types.Message) -> None:
     """Send a message with buttons to download the video"""
     msg = await message.answer(en.GET_LINKS_FOR_VIDEO)
     links = await get_links(message.text)
-    logger.info(links)
     if not links:
         logger.info('The links dictionary is empty, sending an error message')
         await msg.edit_text(en.VIDEO_NOT_FOUND)
