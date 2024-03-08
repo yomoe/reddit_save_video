@@ -30,47 +30,52 @@ API_URL_REDGIFS = 'https://api.redgifs.com/v1/gifs/'
 
 async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
     try:
+        # Загрузка видео и аудио контента
         async with aiohttp.ClientSession(headers=HEADERS) as session:
-            async with session.get(video_link) as response:
-                response.raise_for_status()
-                video_response = await response.read()
+            async with session.get(video_link) as video_response:
+                video_response.raise_for_status()
+                video_content = await video_response.read()
 
-        async with aiohttp.ClientSession(headers=HEADERS) as session:
-            async with session.get(audio_link) as response:
-                response.raise_for_status()
-                audio_response = await response.read()
+            async with session.get(audio_link) as audio_response:
+                audio_response.raise_for_status()
+                audio_content = await audio_response.read()
 
-        with tempfile.NamedTemporaryFile(delete=False) as video_file, tempfile.NamedTemporaryFile(
-                delete=False) as audio_file, tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as output_file:
-            video_file.write(video_response)
-            audio_file.write(audio_response)
+        # Создание временных файлов в контексте менеджера контекста
+        with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as video_file, \
+                tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as audio_file, \
+                tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as output_file:
 
-            logger.debug(f'Created temp files: {video_file.name}, {audio_file.name}')
+            video_file.write(video_content)
+            audio_file.write(audio_content)
+            video_file_name, audio_file_name, output_file_name = video_file.name, audio_file.name, output_file.name
 
-        input_video = ffmpeg.input(video_file.name)
-        input_audio = ffmpeg.input(audio_file.name)
+        logger.debug(f'Created temp files: {video_file_name}, {audio_file_name}')
 
-        (
-            ffmpeg
-            .concat(input_video, input_audio, v=1, a=1)
-            .output(output_file.name)
-            .run(quiet=True, overwrite_output=True)
-        )
+        # Объединение видео и аудио с использованием ffmpeg
+        input_video = ffmpeg.input(video_file_name)
+        input_audio = ffmpeg.input(audio_file_name)
+        ffmpeg.concat(input_video, input_audio, v=1, a=1).output(output_file_name).run(
+            quiet=True, overwrite_output=True)
 
-        logger.debug(f"Concatenation completed: {output_file.name}")
+        logger.debug(f'Concatenation completed: {output_file_name}')
 
-        with open(output_file.name, 'rb') as ready_file:
+        # Чтение и возврат результата
+        with open(output_file_name, 'rb') as ready_file:
             output_data = ready_file.read()
 
-        os.remove(video_file.name)
-        os.remove(audio_file.name)
-        os.remove(output_file.name)
-
-        return output_data
-
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+        logger.error(f'An error occurred: {e}')
         raise e
+    finally:
+        # Удаление временных файлов
+        for filename in [video_file_name, audio_file_name, output_file_name]:
+            try:
+                os.remove(filename)
+                logger.debug(f'Deleted temp file: {filename}')
+            except Exception as delete_error:
+                logger.error(f'Failed to delete temp file {filename}: {delete_error}')
+
+    return output_data
 
 
 async def gif_to_mp4(gif_link: str) -> bytes:
