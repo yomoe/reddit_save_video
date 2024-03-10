@@ -32,3 +32,7 @@ SEND_VIDEO_CANCEL = 'Send video cancel by user'
 FAILED_TO_SEND_VIDEO = 'Failed to send video'
 
 SOURCE_DELETED = 'This post was deleted'
+
+UNEXPECTED_ERROR = 'Unexpected error'
+
+FAILED_TO_PROCESS_VIDEO = 'Failed to process video'

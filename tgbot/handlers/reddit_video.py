@@ -28,6 +28,11 @@ HEADERS = {
 API_URL_REDGIFS = 'https://api.redgifs.com/v1/gifs/'
 
 
+class FFmpegError(Exception):
+    """Исключение, возникающее при ошибках работы с FFmpeg."""
+    pass
+
+
 async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
     output_data = None  # Инициализируем переменную для результата
     try:
@@ -444,6 +449,11 @@ async def bot_send_video(callback: CallbackQuery) -> None:
         )
         await callback.message.delete()
 
+    # Добавляем обработку исключений FFmpegError
+    except FFmpegError as error:
+        logger.exception('FFmpeg error occurred: %s', error)
+        await callback.message.answer(en.FAILED_TO_PROCESS_VIDEO)
+
     except aiohttp.ClientResponseError as error:
         logging.exception('Failed to send video: %s', error)
         await callback.message.answer(en.FAILED_TO_SEND_VIDEO)
@@ -459,6 +469,10 @@ async def bot_send_video(callback: CallbackQuery) -> None:
     except aiohttp.ClientConnectionError as error:
         logging.exception('Failed to send video: %s', error)
         await callback.message.answer(en.FAILED_TO_SEND_VIDEO)
+
+    except Exception as error:  # Перехватываем все остальные исключения
+        logging.exception('Unexpected error occurred: %s', error)
+        await callback.message.answer(en.UNEXPECTED_ERROR)
 
 
 async def bot_get_links_group(message: types.Message) -> None:
