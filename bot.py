@@ -1,6 +1,7 @@
 import asyncio
 import logging
 
+import betterlogging as bl
 from aiogram import Bot, Dispatcher
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.contrib.fsm_storage.redis import RedisStorage2
@@ -12,6 +13,7 @@ from tgbot.handlers.echo import register_echo
 from tgbot.handlers.reddit_video import register_get_links
 from tgbot.handlers.user import register_user
 from tgbot.middlewares.environment import EnvironmentMiddleware
+from tgbot.misc.clear_tmp import clear_tmp_folder
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +34,14 @@ def register_all_handlers(dp):
 
 
 async def main():
+    log_level = logging.INFO
+    bl.basic_colorized_config(level=log_level)
+
     logging.basicConfig(
         level=logging.INFO,
-        format=u'%(filename)s:%(lineno)d #%(levelname)-8s [%(asctime)s] - %(name)s - %(message)s',
+        format="%(filename)s:%(lineno)d #%(levelname)-8s [%(asctime)s] - %(name)s - %(message)s",
     )
+    clear_tmp_folder()
     logger.info("Starting bot")
     config = load_config(".env")
 
