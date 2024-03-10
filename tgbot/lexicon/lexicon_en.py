@@ -35,4 +35,4 @@ SOURCE_DELETED = 'This post was deleted'
 
 UNEXPECTED_ERROR = 'Unexpected error'
 
-FAILED_TO_PROCESS_VIDEO = 'Failed to process video'
+FAILED_TO_PROCESS_VIDEO = 'Failed to process video. Please try changing the video quality'
