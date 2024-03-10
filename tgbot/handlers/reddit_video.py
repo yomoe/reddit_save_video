@@ -88,6 +88,7 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
         # Возвращаем специальное значение или сообщение об ошибке, если объединение не удалось
         # Это позволит корректно обработать ситуацию на уровне вызывающего кода
         logger.error('Failed to concat video and audio files due to FFmpeg error.')
+        raise Exception('Failed to concat video and audio files due to FFmpeg error.')
 
 
 async def gif_to_mp4(gif_link: str) -> bytes:
