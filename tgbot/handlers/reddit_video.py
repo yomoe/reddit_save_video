@@ -138,13 +138,13 @@ async def get_redgifs(url_id: str) -> bytes or None:
                     'mp4', {}).get(
                     'url'))
         except (aiohttp.ClientError, json.JSONDecodeError):
-            logger.exception('Error getting json from %s', url_id)
+            logger.error('Error getting json from %s', url_id)
             return None
         try:
             async with session.get(video_url) as video:
                 file_data = await video.read()
         except aiohttp.ClientError:
-            logger.exception('Error getting video from %s', url_id)
+            logger.error('Error getting video from %s', url_id)
             return None
         return file_data
 
@@ -162,7 +162,7 @@ async def size_file(url: str) -> float:
                 logger.debug('File size: %s MB', size)
                 return size
     except requests.exceptions.RequestException as error:
-        logger.exception('Request to %s failed: %s', url, error)
+        logger.error('Request to %s failed: %s', url, error)
         return 0.0
 
 
@@ -333,7 +333,7 @@ async def get_links(url: str) -> dict:
             json.JSONDecodeError,
             requests.exceptions.RequestException
     ) as error:
-        logger.exception('Error: %s', error)
+        logger.error('Error: %s', error)
         return {}
 
 
@@ -450,27 +450,27 @@ async def bot_send_video(callback: CallbackQuery) -> None:
 
     # Добавляем обработку исключений FFmpegError
     except FFmpegError as error:
-        logger.exception('FFmpeg error occurred: %s', error)
-        await callback.message.answer(en.FAILED_TO_PROCESS_VIDEO)
+        logger.critical('FFmpeg error occurred: %s', error)
+        await callback.message.edit_text(en.FAILED_TO_PROCESS_VIDEO)
 
     except aiohttp.ClientResponseError as error:
-        logging.exception('Failed to send video: %s', error)
+        logging.critical('Failed to send video: %s', error)
         await callback.message.answer(en.FAILED_TO_SEND_VIDEO)
 
     except aiohttp.ClientPayloadError as error:
-        logging.exception('Failed to send video: %s', error)
+        logging.critical('Failed to send video: %s', error)
         await callback.message.answer(en.FAILED_TO_SEND_VIDEO)
 
     except aiohttp.ServerDisconnectedError as error:
-        logging.exception('Failed to send video: %s', error)
+        logging.critical('Failed to send video: %s', error)
         await callback.message.answer(en.FAILED_TO_SEND_VIDEO)
 
     except aiohttp.ClientConnectionError as error:
-        logging.exception('Failed to send video: %s', error)
+        logging.critical('Failed to send video: %s', error)
         await callback.message.answer(en.FAILED_TO_SEND_VIDEO)
 
     except Exception as error:  # Перехватываем все остальные исключения
-        logging.exception('Unexpected error occurred: %s', error)
+        logging.critical('Unexpected error occurred: %s', error)
         await callback.message.answer(en.UNEXPECTED_ERROR)
 
 
@@ -552,20 +552,26 @@ async def bot_get_links_group(message: types.Message) -> None:
             )
             await message.answer_video(video=video_content, caption=caption)
             await msg.delete()
+
+        # Добавляем обработку исключений FFmpegError
+        except FFmpegError as error:
+            logger.critical('FFmpeg error occurred: %s', error)
+            await msg.edit_text(en.FAILED_TO_PROCESS_VIDEO)
+
         except aiohttp.ClientResponseError as error:
-            logging.exception('Failed to send video: %s', error)
+            logging.critical('Failed to send video: %s', error)
             await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
 
         except aiohttp.ClientPayloadError as error:
-            logging.exception('Failed to send video: %s', error)
+            logging.critical('Failed to send video: %s', error)
             await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
 
         except aiohttp.ServerDisconnectedError as error:
-            logging.exception('Failed to send video: %s', error)
+            logging.critical('Failed to send video: %s', error)
             await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
 
         except aiohttp.ClientConnectionError as error:
-            logging.exception('Failed to send video: %s', error)
+            logging.critical('Failed to send video: %s', error)
             await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
 
 
