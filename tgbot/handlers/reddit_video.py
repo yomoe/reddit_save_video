@@ -29,6 +29,7 @@ API_URL_REDGIFS = 'https://api.redgifs.com/v1/gifs/'
 
 
 async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
+    output_data = None  # Инициализируем переменную для результата
     try:
         # Загрузка видео и аудио контента
         async with aiohttp.ClientSession(headers=HEADERS) as session:
@@ -63,6 +64,12 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
         with open(output_file_name, 'rb') as ready_file:
             output_data = ready_file.read()
 
+    except ffmpeg._run.Error as ffmpeg_error:
+        # Логируем ошибку ffmpeg
+        logger.error(f'FFmpeg error: {ffmpeg_error}')
+        # Можно добавить дополнительную логику обработки ошибки, например, отправку уведомления
+
+
     except Exception as e:
         logger.error(f'An error occurred: {e}')
         raise e
@@ -75,7 +82,12 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
             except Exception as delete_error:
                 logger.error(f'Failed to delete temp file {filename}: {delete_error}')
 
-    return output_data
+    if output_data:
+        return output_data
+    else:
+        # Возвращаем специальное значение или сообщение об ошибке, если объединение не удалось
+        # Это позволит корректно обработать ситуацию на уровне вызывающего кода
+        logger.error('Failed to concat video and audio files due to FFmpeg error.')
 
 
 async def gif_to_mp4(gif_link: str) -> bytes:
@@ -169,7 +181,7 @@ async def parse_xml(xml: str, url: str) -> dict:
                 logger.debug('File size: %s MB', size)
                 if size < 50:
                     video_links[f'{resolution}p {size}mb'] = link
-    logger.info(video_links)
+    logger.debug(video_links)
     return video_links
 
 
@@ -248,7 +260,7 @@ async def get_links(url: str) -> dict:
         logger.debug('File size: %s MB', size)
         if size < 50:
             dict_video[f'{max_resol}p {size:.1f}mb'] = max_resol_link
-        logger.info(dict_video)
+        logger.debug(dict_video)
         return dict_video
 
     try:
@@ -329,7 +341,7 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
     """Send a message with buttons to download the video"""
     msg = await message.answer(en.GET_LINKS_FOR_VIDEO)
     links = await get_links(message.text)
-    logger.info(links)
+    logger.debug(links)
     if not links:
         logger.info('The links dictionary is empty, sending an error message')
         await msg.edit_text(en.VIDEO_NOT_FOUND)
