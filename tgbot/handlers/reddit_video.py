@@ -378,12 +378,14 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
         )
         try:
             if os.path.splitext(links['image'])[1] == '.gif':
+                logger.error('GIF: %s', links['image'])
                 await message.answer_animation(links['image'], caption=links['caption'])
             else:
                 await message.answer_photo(
                     links['image'], caption=links['caption'])
             await msg.delete()
         except Exception as e:
+            await msg.edit_text(en.UNEXPECTED_ERROR)
             logger.error(f'Ошибка при отправке GIF: {e}')
     elif 'gallery' in links:
         await msg.edit_text(en.SENDING_GALLERY)
@@ -514,12 +516,14 @@ async def bot_get_links_group(message: types.Message) -> None:
         )
         try:
             if os.path.splitext(links['image'])[1] == '.gif':
+                logger.error('GIF: %s', links['image'])
                 await message.answer_animation(links['image'], caption=links['caption'])
             else:
                 await message.answer_photo(
                     links['image'], caption=links['caption'])
             await msg.delete()
         except Exception as e:
+            await msg.edit_text(en.UNEXPECTED_ERROR)
             logger.error(f'Ошибка при отправке GIF: {e}')
     elif 'gallery' in links:
         await msg.edit_text(en.SENDING_GALLERY)
