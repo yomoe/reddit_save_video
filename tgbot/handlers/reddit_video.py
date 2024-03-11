@@ -378,7 +378,6 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
         )
         try:
             if os.path.splitext(links['image'])[1] == '.gif':
-                logger.error('GIF: %s', links['image'])
                 await message.answer_animation(links['image'], caption=links['caption'])
             else:
                 await message.answer_photo(
@@ -516,7 +515,6 @@ async def bot_get_links_group(message: types.Message) -> None:
         )
         try:
             if os.path.splitext(links['image'])[1] == '.gif':
-                logger.error('GIF: %s', links['image'])
                 await message.answer_animation(links['image'], caption=links['caption'])
             else:
                 await message.answer_photo(
