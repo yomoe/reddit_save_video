@@ -1,3 +1,6 @@
+import asyncio
+
+from aiogram.utils.exceptions import RetryAfter
 from aiogram.dispatcher import FSMContext
 import json
 import logging
@@ -396,10 +399,19 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
         )
         gallery = links['gallery']
         for chunk in chunks(gallery, 10):
-            if len(chunk) >= 2:
-                await message.answer_media_group(chunk)
-            else:
-                await message.answer_photo(chunk[0].media)
+            try:
+                if len(chunk) >= 2:
+                    await message.answer_media_group(chunk)
+                else:
+                    await message.answer_photo(chunk[0].media)
+            except RetryAfter as e:
+                logger.info(f'Flood limit exceeded. Sleep for {e.timeout} seconds')
+                await asyncio.sleep(e.timeout)
+                # Попробуйте отправить снова после задержки
+                if len(chunk) >= 2:
+                    await message.answer_media_group(chunk)
+                else:
+                    await message.answer_photo(chunk[0].media)
         await msg.delete()
     else:
         logger.debug('There are links, sending a message with buttons')
@@ -539,10 +551,19 @@ async def bot_get_links_group(message: types.Message) -> None:
         )
         gallery = links['gallery']
         for chunk in chunks(gallery, 10):
-            if len(chunk) >= 2:
-                await message.answer_media_group(chunk)
-            else:
-                await message.answer_photo(chunk[0].media)
+            try:
+                if len(chunk) >= 2:
+                    await message.answer_media_group(chunk)
+                else:
+                    await message.answer_photo(chunk[0].media)
+            except RetryAfter as e:
+                logger.info(f'Flood limit exceeded. Sleep for {e.timeout} seconds')
+                await asyncio.sleep(e.timeout)
+                # Попробуйте отправить снова после задержки
+                if len(chunk) >= 2:
+                    await message.answer_media_group(chunk)
+                else:
+                    await message.answer_photo(chunk[0].media)
         await msg.delete()
     else:
         try:
