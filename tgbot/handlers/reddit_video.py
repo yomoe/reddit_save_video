@@ -482,6 +482,12 @@ async def bot_get_links_group(message: types.Message) -> None:
     msg = await message.answer(text=en.GET_LINKS_FOR_VIDEO)
     links = await get_links(message.text)
     logger.debug(links)
+    try:
+        # Попытка удалить сообщение пользователя
+        await message.delete()
+    except Exception as e:
+        # Обработка возможных исключений
+        logger.error(f'Ошибка при попытке удаления сообщения пользователя: {e}')
     if not links:
         logger.info(
             'The dictionary of links is empty, sending an error message.'
