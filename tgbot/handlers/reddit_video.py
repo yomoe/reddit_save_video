@@ -178,8 +178,17 @@ async def parse_xml(xml: str, url: str) -> dict:
         content_type = adaptation_set.get('contentType')
         if content_type == 'audio':
             base_url = adaptation_set.find('BaseURL').text
-            audio = url + base_url
-            video_links['audio'] = audio
+            audio_bandwidth = 0
+            for adaptation_set in soup.find_all('AdaptationSet', {'contentType': 'audio'}):
+                for representation in adaptation_set.find_all('Representation'):
+                    current_bandwidth = int(representation.get('bandwidth', 0))
+                    if current_bandwidth > audio_bandwidth:
+                        base_url = representation.find('BaseURL').text
+                        audio_bandwidth = current_bandwidth
+
+            if audio_bandwidth > 0:
+                audio = url + base_url
+                video_links['audio'] = audio
         elif content_type == 'video':
             videos = [x.text for x in adaptation_set.find_all('BaseURL')]
             for video in videos:
