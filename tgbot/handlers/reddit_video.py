@@ -398,20 +398,23 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
             message.from_user.id
         )
         gallery = links['gallery']
+        retry_delay = 5
         for chunk in chunks(gallery, 10):
-            try:
-                if len(chunk) >= 2:
-                    await message.answer_media_group(chunk)
-                else:
-                    await message.answer_photo(chunk[0].media)
-            except RetryAfter as e:
-                logger.info(f'Flood limit exceeded. Sleep for {e.timeout} seconds')
-                await asyncio.sleep(e.timeout)
-                # Попробуйте отправить снова после задержки
-                if len(chunk) >= 2:
-                    await message.answer_media_group(chunk)
-                else:
-                    await message.answer_photo(chunk[0].media)
+            while True:
+                try:
+                    if len(chunk) >= 2:
+                        await message.answer_media_group(chunk)
+                    else:
+                        await message.answer_photo(chunk[0].media)
+                    break  # Выйти из цикла после успешной отправки
+                except RetryAfter as e:
+                    logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Увеличиваем задержку в 2 раза для следующей попытки
+                except Exception as e:
+                    logger.error(f'Unexpected error: {e}')
+                    await msg.edit_text(en.UNEXPECTED_ERROR)
+                    break  # Прерываем цикл в случае других ошибок
         await msg.delete()
     else:
         logger.debug('There are links, sending a message with buttons')
@@ -550,20 +553,23 @@ async def bot_get_links_group(message: types.Message) -> None:
             message.chat.id
         )
         gallery = links['gallery']
+        retry_delay = 5
         for chunk in chunks(gallery, 10):
-            try:
-                if len(chunk) >= 2:
-                    await message.answer_media_group(chunk)
-                else:
-                    await message.answer_photo(chunk[0].media)
-            except RetryAfter as e:
-                logger.info(f'Flood limit exceeded. Sleep for {e.timeout} seconds')
-                await asyncio.sleep(e.timeout)
-                # Попробуйте отправить снова после задержки
-                if len(chunk) >= 2:
-                    await message.answer_media_group(chunk)
-                else:
-                    await message.answer_photo(chunk[0].media)
+            while True:
+                try:
+                    if len(chunk) >= 2:
+                        await message.answer_media_group(chunk)
+                    else:
+                        await message.answer_photo(chunk[0].media)
+                    break  # Выйти из цикла после успешной отправки
+                except RetryAfter as e:
+                    logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Увеличиваем задержку в 2 раза для следующей попытки
+                except Exception as e:
+                    logger.error(f'Unexpected error: {e}')
+                    await msg.edit_text(en.UNEXPECTED_ERROR)
+                    break  # Прерываем цикл в случае других ошибок
         await msg.delete()
     else:
         try:
