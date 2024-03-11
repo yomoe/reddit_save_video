@@ -376,12 +376,15 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
             message.from_user.full_name,
             message.from_user.id
         )
-        if os.path.splitext(links['image'])[1] == '.gif':
-            await message.answer_animation(links['image'], caption=links['caption'])
-        else:
-            await message.answer_photo(
-                links['image'], caption=links['caption'])
-        await msg.delete()
+        try:
+            if os.path.splitext(links['image'])[1] == '.gif':
+                await message.answer_animation(links['image'], caption=links['caption'])
+            else:
+                await message.answer_photo(
+                    links['image'], caption=links['caption'])
+            await msg.delete()
+        except Exception as e:
+            logger.error(f'Ошибка при отправке GIF: {e}')
     elif 'gallery' in links:
         await msg.edit_text(en.SENDING_GALLERY)
         logger.info(
@@ -509,12 +512,15 @@ async def bot_get_links_group(message: types.Message) -> None:
             message.chat.type,
             message.chat.id
         )
-        if os.path.splitext(links['image'])[1] == '.gif':
-            await message.answer_animation(links['image'], caption=links['caption'])
-        else:
-            await message.answer_photo(
-                links['image'], caption=links['caption'])
-        await msg.delete()
+        try:
+            if os.path.splitext(links['image'])[1] == '.gif':
+                await message.answer_animation(links['image'], caption=links['caption'])
+            else:
+                await message.answer_photo(
+                    links['image'], caption=links['caption'])
+            await msg.delete()
+        except Exception as e:
+            logger.error(f'Ошибка при отправке GIF: {e}')
     elif 'gallery' in links:
         await msg.edit_text(en.SENDING_GALLERY)
         logger.info(
