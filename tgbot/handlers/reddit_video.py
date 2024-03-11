@@ -226,7 +226,9 @@ async def get_links(url: str) -> dict:
 
     def get_find_json(res_json):
         find_json = res_json[0]['data'].get('children', [{}])[0]['data']
-        if 'crosspost_parent_list' in res.text:
+
+        # Проверяем, существует ли ключ 'crosspost_parent_list' и не пуст ли список
+        if 'crosspost_parent_list' in find_json and find_json['crosspost_parent_list']:
             find_json = find_json.get('crosspost_parent_list', [{}])[0]
         return find_json
 
@@ -390,7 +392,7 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
             await msg.edit_text(en.UNEXPECTED_ERROR)
             logger.error(f'Ошибка при отправке GIF: {e}')
     elif 'gallery' in links:
-        await msg.edit_text(en.SENDING_GALLERY)
+        # await msg.edit_text(en.SENDING_GALLERY)
         logger.info(
             'Send gallery to user %s (%s) id %s',
             message.from_user.username,
@@ -545,7 +547,7 @@ async def bot_get_links_group(message: types.Message) -> None:
             await msg.edit_text(en.UNEXPECTED_ERROR)
             logger.error(f'Ошибка при отправке GIF: {e}')
     elif 'gallery' in links:
-        await msg.edit_text(en.SENDING_GALLERY)
+        # await msg.edit_text(en.SENDING_GALLERY)
         logger.info(
             'Sending gallery for chat %s, %s id %s',
             message.chat.title,
