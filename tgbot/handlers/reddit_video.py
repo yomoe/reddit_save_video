@@ -95,35 +95,35 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
     raise FFmpegError('Failed to concat video and audio files due to FFmpeg error.')
 
 
-async def gif_to_mp4(gif_link: str) -> bytes:
-    """Convert gif to mp4 and return the result."""
-    async with aiohttp.ClientSession(headers=HEADERS) as session:
-        async with session.get(gif_link) as response:
-            response.raise_for_status()
-            gif_response = await response.read()
-
-    with tempfile.NamedTemporaryFile(
-            suffix='.gif',
-            delete=False
-    ) as gif_file, tempfile.NamedTemporaryFile(
-        suffix='.mp4',
-        delete=False
-    ) as output_file:
-        gif_file.write(gif_response)
-
-    (
-        ffmpeg
-        .input(gif_file.name)
-        .output(output_file.name)
-        .run(quiet=True, overwrite_output=True)
-    )
-
-    with open(output_file.name, 'rb') as ready_file:
-        output_data = ready_file.read()
-
-    os.remove(gif_file.name)
-    os.remove(output_file.name)
-    return output_data
+# async def gif_to_mp4(gif_link: str) -> bytes:
+#     """Convert gif to mp4 and return the result."""
+#     async with aiohttp.ClientSession(headers=HEADERS) as session:
+#         async with session.get(gif_link) as response:
+#             response.raise_for_status()
+#             gif_response = await response.read()
+#
+#     with tempfile.NamedTemporaryFile(
+#             suffix='.gif',
+#             delete=False
+#     ) as gif_file, tempfile.NamedTemporaryFile(
+#         suffix='.mp4',
+#         delete=False
+#     ) as output_file:
+#         gif_file.write(gif_response)
+#
+#     (
+#         ffmpeg
+#         .input(gif_file.name)
+#         .output(output_file.name)
+#         .run(quiet=True, overwrite_output=True)
+#     )
+#
+#     with open(output_file.name, 'rb') as ready_file:
+#         output_data = ready_file.read()
+#
+#     os.remove(gif_file.name)
+#     os.remove(output_file.name)
+#     return output_data
 
 
 async def get_redgifs(url_id: str) -> bytes or None:
@@ -377,8 +377,7 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
             message.from_user.id
         )
         if os.path.splitext(links['image'])[1] == '.gif':
-            await message.answer_video(
-                await gif_to_mp4(links['image']), caption=links['caption'])
+            await message.answer_animation(links['image'], caption=links['caption'])
         else:
             await message.answer_photo(
                 links['image'], caption=links['caption'])
@@ -478,7 +477,7 @@ async def bot_get_links_group(message: types.Message) -> None:
     """Send video to a group or channel in the second-to-last quality"""
     msg = await message.answer(text=en.GET_LINKS_FOR_VIDEO)
     links = await get_links(message.text)
-    logger.info(links)
+    logger.debug(links)
     if not links:
         logger.info(
             'The dictionary of links is empty, sending an error message.'
@@ -511,8 +510,7 @@ async def bot_get_links_group(message: types.Message) -> None:
             message.chat.id
         )
         if os.path.splitext(links['image'])[1] == '.gif':
-            await message.answer_video(
-                await gif_to_mp4(links['image']), caption=links['caption'])
+            await message.answer_animation(links['image'], caption=links['caption'])
         else:
             await message.answer_photo(
                 links['image'], caption=links['caption'])
