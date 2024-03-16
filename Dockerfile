@@ -1,4 +1,4 @@
-FROM python:3.11.4-slim-buster
+FROM python:3.11.8-slim-bookworm
 
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y ffmpeg libpq-dev gcc && \
