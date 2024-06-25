@@ -25,19 +25,20 @@ reddit = asyncpraw.Reddit(
 
 # Асинхронная функция для получения случайного поста с изображением из указанного сабреддита
 async def get_random_image_post(subreddit_name='FindTheSniper'):
-    subreddit = await reddit.subreddit(subreddit_name)
-    # Получаем список горячих постов
-    hot_posts = [post async for post in subreddit.hot(limit=100)]
-    # Фильтруем посты, оставляя только те, которые содержат изображения
-    image_posts = [post for post in hot_posts if post.url.endswith(('jpg', 'jpeg', 'png'))]
+    async with reddit:
+        subreddit = await reddit.subreddit(subreddit_name)
+        # Получаем список горячих постов
+        hot_posts = [post async for post in subreddit.hot(limit=100)]
+        # Фильтруем посты, оставляя только те, которые содержат изображения
+        image_posts = [post for post in hot_posts if post.url.endswith(('jpg', 'jpeg', 'png'))]
 
-    if not image_posts:
-        return None
+        if not image_posts:
+            return None
 
-    # Возвращаем случайный пост из отфильтрованного списка
-    random_post = random.choice(image_posts)
-    return {
-        "title": random_post.title,
-        "img_url": random_post.url,
-        "post_url": random_post.shortlink
-    }
+        # Возвращаем случайный пост из отфильтрованного списка
+        random_post = random.choice(image_posts)
+        return {
+            "title": random_post.title,
+            "img_url": random_post.url,
+            "post_url": random_post.shortlink
+        }
