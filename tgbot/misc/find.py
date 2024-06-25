@@ -1,4 +1,4 @@
-import praw
+import asyncpraw
 import random
 
 from environs import Env
@@ -15,19 +15,19 @@ HEADERS = {
     'user-agent': ua.chrome,
 }
 
-# Инициализируем клиент PRAW
-reddit = praw.Reddit(
+# Инициализируем клиент Async PRAW
+reddit = asyncpraw.Reddit(
     client_id=REDDIT_CLIENT_ID,
     client_secret=REDDIT_CLIENT_SECRET,
     user_agent=ua.chrome
 )
 
 
-# Функция для получения случайного поста с изображением из указанного сабреддита
-def get_random_image_post(subreddit_name='FindTheSniper'):
-    subreddit = reddit.subreddit(subreddit_name)
+# Асинхронная функция для получения случайного поста с изображением из указанного сабреддита
+async def get_random_image_post(subreddit_name='FindTheSniper'):
+    subreddit = await reddit.subreddit(subreddit_name)
     # Получаем список горячих постов
-    hot_posts = list(subreddit.hot(limit=100))
+    hot_posts = [post async for post in subreddit.hot(limit=100)]
     # Фильтруем посты, оставляя только те, которые содержат изображения
     image_posts = [post for post in hot_posts if post.url.endswith(('jpg', 'jpeg', 'png'))]
 
