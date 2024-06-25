@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 from aiogram import Dispatcher
@@ -29,19 +28,16 @@ async def user_advice(message: Message):
     await message.reply(f'{user}, {advice.lower()}')
 
 
-async def user_find(message):
-    try:
-        async with asyncio.timeout(10):  # Установка таймаута в 10 секунд
-            random_image_post = await get_random_image_post()
-            if isinstance(random_image_post, dict):
-                await message.answer_photo(
-                    random_image_post['img_url'],
-                    caption=f'{random_image_post["title"]}\n\n{random_image_post["post_url"]}'
-                )
-            else:
-                await message.reply("There's some kind of error, try again: /find")
-    except asyncio.TimeoutError:
-        await message.reply("Request timed out, please try again later.")
+async def user_find(message: Message):
+    random_image_post = get_random_image_post()
+    if isinstance(random_image_post, dict):
+        logger.info('Начинаем поиск')
+        await message.answer_photo(
+            random_image_post['img_url'],
+            f'{random_image_post["title"]}\n\nYou can look up the answer here: {random_image_post["post_url"]}')
+    elif not random_image_post:
+        logger.info('Какая то ошибка')
+        await message.reply(f'There\'s some kind of error, try again: /find')
 
 
 def register_user(dp: Dispatcher):
