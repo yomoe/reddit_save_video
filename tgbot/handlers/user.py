@@ -1,6 +1,7 @@
+import io
 import logging
 
-from aiogram import Dispatcher
+from aiogram import Dispatcher, types
 from aiogram.types import Message
 
 from ..lexicon import lexicon_en as en
@@ -31,10 +32,16 @@ async def user_advice(message: Message):
 async def user_find(message: Message):
     random_image_post = get_random_image_post()
     if isinstance(random_image_post, dict):
-        logger.info('Начинаем поиск')
+        logger.info(
+            f'Начинаем поиск\n'
+            f'{random_image_post["title"]}\n'
+            f'{random_image_post["post_url"]}\n'
+            f'{random_image_post["img_url"]}'
+        )
         await message.answer_photo(
-            random_image_post['img_url'],
-            f'{random_image_post["title"]}\n\nYou can look up the answer here: {random_image_post["post_url"]}')
+            types.InputFile(io.BytesIO(random_image_post['img_data']), filename='image.jpg'),
+            caption=f'{random_image_post["title"]}\n\nYou can look up the answer here: {random_image_post["post_url"]}'
+        )
     elif not random_image_post:
         logger.info('Какая то ошибка')
         await message.reply(f'There\'s some kind of error, try again: /find')

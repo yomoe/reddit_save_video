@@ -1,8 +1,10 @@
-import praw
 import random
 
+import aiohttp
+import praw
 from environs import Env
 from fake_useragent import UserAgent
+
 env = Env()
 env.read_env()
 # Укажите свои ключи, полученные при регистрации приложения на Reddit
@@ -23,31 +25,25 @@ reddit = praw.Reddit(
 
 
 # Функция для получения случайного поста с изображением из указанного сабреддита
-def get_random_image_post(subreddit_name='FindTheSniper'):
+async def get_random_image_post(subreddit_name='FindTheSniper'):
     subreddit = reddit.subreddit(subreddit_name)
-    # Получаем список горячих постов
     hot_posts = list(subreddit.hot(limit=100))
-    # Фильтруем посты, оставляя только те, которые содержат изображения
     image_posts = [post for post in hot_posts if post.url.endswith(('jpg', 'jpeg', 'png'))]
 
     if not image_posts:
         return None
 
-    # Возвращаем случайный пост из отфильтрованного списка
     random_post = random.choice(image_posts)
-    return {
-        "title": random_post.title,
-        "img_url": random_post.url,
-        "post_url": random_post.shortlink
-    }
+    img_url = random_post.url
 
-
-# Пример использования функции
-random_image_post = get_random_image_post()
-
-if isinstance(random_image_post, dict):
-    print(f"Title: {random_image_post['title']}")
-    print(f"Img URL: {random_image_post['img_url']}")
-    print(f"Post URL: {random_image_post['post_url']}")
-else:
-    print(random_image_post)
+    async with aiohttp.ClientSession() as session:
+        async with session.get(img_url) as response:
+            if response.status == 200:
+                img_data = await response.read()
+                return {
+                    "title": random_post.title,
+                    "img_data": img_data,
+                    "post_url": random_post.shortlink
+                }
+            else:
+                return None
