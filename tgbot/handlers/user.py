@@ -5,7 +5,10 @@ from aiogram.types import Message
 
 from ..lexicon import lexicon_en as en
 from ..misc.advice import get_advice
+from ..misc.find import get_random_image_post
+
 logger = logging.getLogger(__name__)
+
 
 async def user_start(message: Message):
     await message.reply(
@@ -25,6 +28,20 @@ async def user_advice(message: Message):
     await message.reply(f'{user}, {advice.lower()}')
 
 
+async def user_find(message: Message):
+    random_image_post = get_random_image_post()
+    if isinstance(random_image_post, dict):
+        logger.info('Начинаем поиск')
+        await message.answer_photo(
+            random_image_post['img_url'],
+            f'{random_image_post["title"]}\n\n{random_image_post["post_url"]}'
+        )
+    elif not random_image_post:
+        logger.info('Какая то ошибка')
+        await message.reply(f'There\'s some kind of error, try again: /find')
+
+
 def register_user(dp: Dispatcher):
     dp.register_message_handler(user_start, commands=["start"], state="*")
     dp.register_message_handler(user_advice, commands=["advice"], state="*")
+    dp.register_message_handler(user_find, commands=["find"], state="*")
