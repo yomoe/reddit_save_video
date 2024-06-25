@@ -30,7 +30,7 @@ async def user_advice(message: Message):
 
 
 async def user_find(message: Message):
-    random_image_post = get_random_image_post()
+    random_image_post = await get_random_image_post()
     if isinstance(random_image_post, dict):
         logger.info(
             f'Начинаем поиск\n'
