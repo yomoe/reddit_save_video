@@ -36,7 +36,6 @@ async def user_find(message: Message):
             f'Начинаем поиск\n'
             f'{random_image_post["title"]}\n'
             f'{random_image_post["post_url"]}\n'
-            f'{random_image_post["img_url"]}'
         )
         await message.answer_photo(
             types.InputFile(io.BytesIO(random_image_post['img_data']), filename='image.jpg'),
