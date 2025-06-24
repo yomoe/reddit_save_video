@@ -320,7 +320,7 @@ async def get_links(url: str) -> dict:
 
         if is_image(res_json):
             video_link['image'] = res_json[0]['data'].get('children', [{}])[0][
-                'data'].get('urlurl', [{}])
+                'data'].get('url', '')
             video_link['caption'] = get_caption(res_json)
             return video_link
 
