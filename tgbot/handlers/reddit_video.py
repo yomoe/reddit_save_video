@@ -13,7 +13,7 @@ import aiohttp
 import ffmpeg
 import requests
 from aiogram import Dispatcher, types
-from aiogram.types import CallbackQuery, InputMediaPhoto
+from aiogram.types import CallbackQuery, InputMediaPhoto, InputMediaAnimation
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 
@@ -334,12 +334,16 @@ async def get_links(url: str) -> dict:
         if is_gallery(res_json):
             gallery_data = get_find_json(res_json).get('gallery_data', {})
             media_metadata = get_find_json(res_json).get('media_metadata', {})
-            photos = [
-                InputMediaPhoto(
-                    media_metadata.get(item['media_id'], {}).get('s', {}).get('u', '').replace('&amp;', '&'),
-                    caption=get_caption(res_json) if i == 0 else None,
-                ) for i, item in enumerate(gallery_data.get('items', []))
-            ]
+            photos = []
+            for i, item in enumerate(gallery_data.get('items', [])):
+                meta = media_metadata.get(item['media_id'], {})
+                url = meta.get('s', {}).get('u', '').replace('&amp;', '&')
+                caption = get_caption(res_json) if i == 0 else None
+                mime = meta.get('m', '')
+                if 'gif' in mime:
+                    photos.append(InputMediaAnimation(url, caption=caption))
+                else:
+                    photos.append(InputMediaPhoto(url, caption=caption))
             return {'gallery': photos}
         return {}
     except (
@@ -415,7 +419,11 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
                     if len(chunk) >= 2:
                         await message.answer_media_group(chunk)
                     else:
-                        await message.answer_photo(chunk[0].media)
+                        media = chunk[0]
+                        if isinstance(media, InputMediaAnimation):
+                            await message.answer_animation(media.media, caption=media.caption)
+                        else:
+                            await message.answer_photo(media.media, caption=media.caption)
                     break  # Выйти из цикла после успешной отправки
                 except RetryAfter as e:
                     logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
@@ -570,7 +578,11 @@ async def bot_get_links_group(message: types.Message) -> None:
                     if len(chunk) >= 2:
                         await message.answer_media_group(chunk)
                     else:
-                        await message.answer_photo(chunk[0].media)
+                        media = chunk[0]
+                        if isinstance(media, InputMediaAnimation):
+                            await message.answer_animation(media.media, caption=media.caption)
+                        else:
+                            await message.answer_photo(media.media, caption=media.caption)
                     break  # Выйти из цикла после успешной отправки
                 except RetryAfter as e:
                     logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
