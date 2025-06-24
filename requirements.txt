@@ -4,7 +4,7 @@ aioredis<2.0
 environs~=14.2.0
 requests~=2.32.4
 beautifulsoup4~=4.11.2
-pyhelpers~=1.4.5
+pyhelpers~=2.2.0
 urllib3~=1.26.14
 betterlogging~=1.0.0
 fake-useragent~=1.1.1
