@@ -1,8 +1,8 @@
 psycopg2-binary~=2.9.6
 aiogram~=2.25.1
 aioredis<2.0
-environs~=9.0
-requests~=2.28.2
+environs~=14.2.0
+requests~=2.32.4
 beautifulsoup4~=4.11.2
 pyhelpers~=1.4.5
 urllib3~=1.26.14
@@ -11,4 +11,4 @@ fake-useragent~=1.1.1
 lxml~=4.9.2
 aiohttp~=3.8.3
 ffmpeg-python~=0.2.0
-praw~=7.7.1
+praw~=7.8.1
