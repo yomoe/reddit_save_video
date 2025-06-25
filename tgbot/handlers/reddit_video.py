@@ -356,14 +356,15 @@ async def get_links(url: str) -> dict:
             photos = []
             for i, item in enumerate(gallery_data.get('items', [])):
                 meta = media_metadata.get(item['media_id'], {})
-                url = html.unescape(meta.get('s', {}).get('u', ''))
+                media = meta.get('s', {})
+                url = html.unescape(media.get('u') or media.get('gif') or media.get('mp4', ''))
                 if not url:
-                    logger.warning('Skipping gallery item %s due to missing URL', item.get('media_id'))
+                    logger.warning('Skipping gallery item %s due to missing media fields', item.get('media_id'))
                     continue
                 caption = get_caption(res_json) if i == 0 else None
                 mime = meta.get('m', '')
                 if 'gif' in mime:
-                    photos.append(InputMediaDocument(url, caption=caption))
+                    photos.append(InputMediaAnimation(url, caption=caption))
                 else:
                     photos.append(InputMediaPhoto(url, caption=caption))
             return {'gallery': photos}
