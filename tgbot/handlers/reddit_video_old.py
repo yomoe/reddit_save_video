@@ -138,7 +138,7 @@ async def size_file(url: str) -> float:
                 )
                 logger.debug('File size: %s MB', size)
                 return size
-    except requests.exceptions.RequestException as error:
+    except aiohttp.ClientError as error:
         logger.exception('Request to %s failed: %s', url, error)
         return 0.0
 
