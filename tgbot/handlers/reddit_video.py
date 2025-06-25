@@ -21,6 +21,7 @@ from aiogram.types import (
 )
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
+import html
 
 from tgbot.keyboards.inline import create_inline_kb
 from tgbot.lexicon import lexicon_en as en
@@ -355,7 +356,10 @@ async def get_links(url: str) -> dict:
             photos = []
             for i, item in enumerate(gallery_data.get('items', [])):
                 meta = media_metadata.get(item['media_id'], {})
-                url = meta.get('s', {}).get('u', '').replace('&amp;', '&')
+                url = html.unescape(meta.get('s', {}).get('u', ''))
+                if not url:
+                    logger.warning('Skipping gallery item %s due to missing URL', item.get('media_id'))
+                    continue
                 caption = get_caption(res_json) if i == 0 else None
                 mime = meta.get('m', '')
                 if 'gif' in mime:
