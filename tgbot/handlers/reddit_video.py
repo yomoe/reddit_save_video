@@ -435,20 +435,20 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
             message.from_user.id
         )
         gallery = links['gallery']
+        documents = [m for m in gallery if isinstance(m, InputMediaDocument)]
+        media = [m for m in gallery if not isinstance(m, InputMediaDocument)]
         retry_delay = 5
-        for chunk in chunks(gallery, 10):
+        for chunk in chunks(media, 10):
             while True:
                 try:
                     if len(chunk) >= 2:
                         await message.answer_media_group(chunk)
                     else:
-                        media = chunk[0]
-                        if isinstance(media, InputMediaDocument):
-                            await message.answer_document(media.media, caption=media.caption)
-                        elif isinstance(media, InputMediaAnimation):
-                            await message.answer_animation(media.media, caption=media.caption)
+                        media_item = chunk[0]
+                        if isinstance(media_item, InputMediaAnimation):
+                            await message.answer_animation(media_item.media, caption=media_item.caption)
                         else:
-                            await message.answer_photo(media.media, caption=media.caption)
+                            await message.answer_photo(media_item.media, caption=media_item.caption)
                     break  # Выйти из цикла после успешной отправки
                 except RetryAfter as e:
                     logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
@@ -458,6 +458,19 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
                     logger.error(f'Unexpected error: {e}')
                     await msg.edit_text(en.UNEXPECTED_ERROR)
                     break  # Прерываем цикл в случае других ошибок
+        for document in documents:
+            while True:
+                try:
+                    await message.answer_document(document.media, caption=document.caption)
+                    break
+                except RetryAfter as e:
+                    logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                except Exception as e:
+                    logger.error(f'Unexpected error: {e}')
+                    await msg.edit_text(en.UNEXPECTED_ERROR)
+                    break
         await msg.delete()
     else:
         logger.debug('There are links, sending a message with buttons')
@@ -596,20 +609,20 @@ async def bot_get_links_group(message: types.Message) -> None:
             message.chat.id
         )
         gallery = links['gallery']
+        documents = [m for m in gallery if isinstance(m, InputMediaDocument)]
+        media = [m for m in gallery if not isinstance(m, InputMediaDocument)]
         retry_delay = 5
-        for chunk in chunks(gallery, 10):
+        for chunk in chunks(media, 10):
             while True:
                 try:
                     if len(chunk) >= 2:
                         await message.answer_media_group(chunk)
                     else:
-                        media = chunk[0]
-                        if isinstance(media, InputMediaDocument):
-                            await message.answer_document(media.media, caption=media.caption)
-                        elif isinstance(media, InputMediaAnimation):
-                            await message.answer_animation(media.media, caption=media.caption)
+                        media_item = chunk[0]
+                        if isinstance(media_item, InputMediaAnimation):
+                            await message.answer_animation(media_item.media, caption=media_item.caption)
                         else:
-                            await message.answer_photo(media.media, caption=media.caption)
+                            await message.answer_photo(media_item.media, caption=media_item.caption)
                     break  # Выйти из цикла после успешной отправки
                 except RetryAfter as e:
                     logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
@@ -619,6 +632,19 @@ async def bot_get_links_group(message: types.Message) -> None:
                     logger.error(f'Unexpected error: {e}')
                     await msg.edit_text(en.UNEXPECTED_ERROR)
                     break  # Прерываем цикл в случае других ошибок
+        for document in documents:
+            while True:
+                try:
+                    await message.answer_document(document.media, caption=document.caption)
+                    break
+                except RetryAfter as e:
+                    logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                except Exception as e:
+                    logger.error(f'Unexpected error: {e}')
+                    await msg.edit_text(en.UNEXPECTED_ERROR)
+                    break
         await msg.delete()
     else:
         try:
