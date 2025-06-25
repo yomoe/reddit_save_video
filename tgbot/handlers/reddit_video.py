@@ -418,8 +418,9 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
             message.from_user.id
         )
         try:
-            if os.path.splitext(links['image'])[1] == '.gif':
-                await message.answer_animation(links['image'], caption=links['caption'])
+            ext = os.path.splitext(urlparse(links['image']).path)[1].lower()
+            if ext == '.gif':
+                await message.answer_document(links['image'], caption=links['caption'])
             else:
                 await message.answer_photo(
                     links['image'], caption=links['caption'])
@@ -592,8 +593,9 @@ async def bot_get_links_group(message: types.Message) -> None:
             message.chat.id
         )
         try:
-            if os.path.splitext(links['image'])[1] == '.gif':
-                await message.answer_animation(links['image'], caption=links['caption'])
+            ext = os.path.splitext(urlparse(links['image']).path)[1].lower()
+            if ext == '.gif':
+                await message.answer_document(links['image'], caption=links['caption'])
             else:
                 await message.answer_photo(
                     links['image'], caption=links['caption'])
