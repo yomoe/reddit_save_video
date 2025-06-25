@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import tempfile
+from io import BytesIO
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import aiohttp
@@ -18,6 +19,7 @@ from aiogram.types import (
     InputMediaPhoto,
     InputMediaAnimation,
     InputMediaDocument,
+    InputFile,
 )
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
@@ -420,14 +422,23 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
         try:
             ext = os.path.splitext(urlparse(links['image']).path)[1].lower()
             if ext == '.gif':
-                await message.answer_document(links['image'], caption=links['caption'])
+                try:
+                    data = await download_file(links['image'])
+                except Exception as e:
+                    logger.error('Failed to download gif: %s', e)
+                    await msg.edit_text(en.UNEXPECTED_ERROR)
+                    return
+                await message.answer_animation(
+                    InputFile(BytesIO(data), filename='file.gif'),
+                    caption=links['caption']
+                )
             else:
                 await message.answer_photo(
                     links['image'], caption=links['caption'])
             await msg.delete()
         except Exception as e:
             await msg.edit_text(en.UNEXPECTED_ERROR)
-            logger.error(f'Ошибка при отправке GIF: {e}')
+            logger.error(f'Ошибка при отправке изображения: {e}')
     elif 'gallery' in links:
         # await msg.edit_text(en.SENDING_GALLERY)
         logger.info(
@@ -501,6 +512,18 @@ async def download_video(video_link: str, audio_link: str) -> bytes:
                 response.raise_for_status()
                 video_content = await response.read()
     return video_content
+
+
+async def download_file(url: str) -> bytes:
+    """Download a file and return bytes."""
+    async with aiohttp.ClientSession(headers=HEADERS) as session:
+        try:
+            async with session.get(url) as response:
+                response.raise_for_status()
+                return await response.read()
+        except Exception as error:
+            logger.error('Failed to download %s: %s', url, error)
+            raise
 
 
 async def bot_send_video(callback: CallbackQuery) -> None:
@@ -595,14 +618,23 @@ async def bot_get_links_group(message: types.Message) -> None:
         try:
             ext = os.path.splitext(urlparse(links['image']).path)[1].lower()
             if ext == '.gif':
-                await message.answer_document(links['image'], caption=links['caption'])
+                try:
+                    data = await download_file(links['image'])
+                except Exception as e:
+                    logger.error('Failed to download gif: %s', e)
+                    await msg.edit_text(en.UNEXPECTED_ERROR)
+                    return
+                await message.answer_animation(
+                    InputFile(BytesIO(data), filename='file.gif'),
+                    caption=links['caption']
+                )
             else:
                 await message.answer_photo(
                     links['image'], caption=links['caption'])
             await msg.delete()
         except Exception as e:
             await msg.edit_text(en.UNEXPECTED_ERROR)
-            logger.error(f'Ошибка при отправке GIF: {e}')
+            logger.error(f'Ошибка при отправке изображения: {e}')
     elif 'gallery' in links:
         # await msg.edit_text(en.SENDING_GALLERY)
         logger.info(
