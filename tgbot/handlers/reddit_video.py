@@ -364,7 +364,7 @@ async def get_links(url: str) -> dict:
                 caption = get_caption(res_json) if i == 0 else None
                 mime = meta.get('m', '')
                 if 'gif' in mime:
-                    photos.append(InputMediaAnimation(url, caption=caption))
+                    photos.append(InputMediaDocument(url, caption=caption))
                 else:
                     photos.append(InputMediaPhoto(url, caption=caption))
             return {'gallery': photos}
