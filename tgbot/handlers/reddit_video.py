@@ -13,7 +13,12 @@ import aiohttp
 import ffmpeg
 import requests
 from aiogram import Dispatcher, types
-from aiogram.types import CallbackQuery, InputMediaPhoto, InputMediaAnimation
+from aiogram.types import (
+    CallbackQuery,
+    InputMediaPhoto,
+    InputMediaAnimation,
+    InputMediaDocument,
+)
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 
@@ -354,7 +359,7 @@ async def get_links(url: str) -> dict:
                 caption = get_caption(res_json) if i == 0 else None
                 mime = meta.get('m', '')
                 if 'gif' in mime:
-                    photos.append(InputMediaAnimation(url, caption=caption))
+                    photos.append(InputMediaDocument(url, caption=caption))
                 else:
                     photos.append(InputMediaPhoto(url, caption=caption))
             return {'gallery': photos}
@@ -433,7 +438,9 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
                         await message.answer_media_group(chunk)
                     else:
                         media = chunk[0]
-                        if isinstance(media, InputMediaAnimation):
+                        if isinstance(media, InputMediaDocument):
+                            await message.answer_document(media.media, caption=media.caption)
+                        elif isinstance(media, InputMediaAnimation):
                             await message.answer_animation(media.media, caption=media.caption)
                         else:
                             await message.answer_photo(media.media, caption=media.caption)
@@ -592,7 +599,9 @@ async def bot_get_links_group(message: types.Message) -> None:
                         await message.answer_media_group(chunk)
                     else:
                         media = chunk[0]
-                        if isinstance(media, InputMediaAnimation):
+                        if isinstance(media, InputMediaDocument):
+                            await message.answer_document(media.media, caption=media.caption)
+                        elif isinstance(media, InputMediaAnimation):
                             await message.answer_animation(media.media, caption=media.caption)
                         else:
                             await message.answer_photo(media.media, caption=media.caption)
