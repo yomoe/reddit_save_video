@@ -167,24 +167,25 @@ async def parse_xml(xml: str, url: str) -> dict:
     return video_links
 
 
-def clear_url(url):
+async def clear_url(url):
     """Delete parameters from link and change link to json link"""
     try:
-        response = requests.get(url, allow_redirects=True)
-        url = response.url
-        parsed_url = urlparse(url)._replace(query='', fragment='')
-        url = urlunparse(parsed_url)
+        async with aiohttp.ClientSession(headers=HEADERS) as session:
+            async with session.get(url, allow_redirects=True) as response:
+                final_url = str(response.url)
+        parsed_url = urlparse(final_url)._replace(query='', fragment='')
+        final_url = urlunparse(parsed_url)
         logger.debug('Extracted URL: %s', parsed_url)
-        url_clear = urljoin(url, urlparse(url).path)
+        url_clear = urljoin(final_url, urlparse(final_url).path)
         logger.debug('Delete parameters from link: %s', url_clear)
         url_json = re.sub(
             r'/$',
             '.json',
             url_clear
         ) if url_clear.endswith('/') else f'{url_clear}.json'
-        logger.info('Url: %s', url)
+        logger.info('Url: %s', final_url)
         return url_json
-    except requests.exceptions.RequestException as error:
+    except aiohttp.ClientError as error:
         logger.error('Request failed: %s', error)
         return None
 
@@ -194,7 +195,7 @@ async def get_links(url: str) -> dict:
     """Extracts video information from a Reddit URL
     and returns it as a dictionary.
     """
-    links_url = clear_url(url)
+    links_url = await clear_url(url)
     res = requests.get(links_url, headers=HEADERS, timeout=10)
     res.raise_for_status()
     logger.debug('Response status code: %s', res.status_code)
