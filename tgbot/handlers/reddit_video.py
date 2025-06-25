@@ -29,6 +29,7 @@ HEADERS = {
     'user-agent': ua.chrome,
 }
 API_URL_REDGIFS = 'https://api.redgifs.com/v1/gifs/'
+MAX_FILE_SIZE_MB = 50
 
 
 class FFmpegError(Exception):
@@ -174,30 +175,37 @@ async def parse_xml(xml: str, url: str) -> dict:
     video_links = {'audio': 'false'}
     logger.debug('Get xml %s', xml)
     soup = BeautifulSoup(xml, 'xml')
-    for adaptation_set in soup.find_all('AdaptationSet'):
-        content_type = adaptation_set.get('contentType')
-        if content_type == 'audio':
-            base_url = adaptation_set.find('BaseURL').text
-            audio_bandwidth = 0
-            for adaptation_set in soup.find_all('AdaptationSet', {'contentType': 'audio'}):
-                for representation in adaptation_set.find_all('Representation'):
-                    current_bandwidth = int(representation.get('bandwidth', 0))
-                    if current_bandwidth > audio_bandwidth:
-                        base_url = representation.find('BaseURL').text
-                        audio_bandwidth = current_bandwidth
 
-            if audio_bandwidth > 0:
-                audio = url + base_url
-                video_links['audio'] = audio
-        elif content_type == 'video':
-            videos = [x.text for x in adaptation_set.find_all('BaseURL')]
-            for video in videos:
-                resolution = video.split('_')[1].split('.')[0]
-                link = url + video
-                size = await size_file(link)
-                logger.debug('File size: %s MB', size)
-                if size < 50:
-                    video_links[f'{resolution}p {size}mb'] = link
+    # Получаем ссылку и размер аудио потока, если он существует
+    audio_size = 0.0
+    audio_adaptations = soup.find_all('AdaptationSet', {'contentType': 'audio'})
+    if audio_adaptations:
+        base_url = audio_adaptations[0].find('BaseURL').text
+        audio_bandwidth = 0
+        for adaptation_set in audio_adaptations:
+            for representation in adaptation_set.find_all('Representation'):
+                current_bandwidth = int(representation.get('bandwidth', 0))
+                if current_bandwidth > audio_bandwidth:
+                    base_url = representation.find('BaseURL').text
+                    audio_bandwidth = current_bandwidth
+
+        if audio_bandwidth > 0:
+            audio = url + base_url
+            video_links['audio'] = audio
+            audio_size = await size_file(audio)
+
+    # Обрабатываем видео потоки и учитываем размер аудио
+    for adaptation_set in soup.find_all('AdaptationSet', {'contentType': 'video'}):
+        videos = [x.text for x in adaptation_set.find_all('BaseURL')]
+        for video in videos:
+            resolution = video.split('_')[1].split('.')[0]
+            link = url + video
+            video_size = await size_file(link)
+            total_size = video_size + audio_size
+            logger.debug('Video size: %s MB, total with audio: %s MB', video_size, total_size)
+            if total_size < MAX_FILE_SIZE_MB:
+                video_links[f'{resolution}p {total_size:.1f}mb'] = link
+
     logger.debug(video_links)
     return video_links
 
@@ -275,10 +283,15 @@ async def get_links(url: str) -> dict:
     async def get_video_links(fallback_url, dict_video):
         max_resol = fallback_url.split('_')[1].split('.')[0]
         max_resol_link = urljoin(fallback_url, urlparse(fallback_url).path)
-        size = await size_file(max_resol_link)
-        logger.debug('File size: %s MB', size)
-        if size < 50:
-            dict_video[f'{max_resol}p {size:.1f}mb'] = max_resol_link
+        video_size = await size_file(max_resol_link)
+        audio_size = 0.0
+        audio_link = dict_video.get('audio')
+        if audio_link and audio_link != 'false':
+            audio_size = await size_file(audio_link)
+        total_size = video_size + audio_size
+        logger.debug('Video size: %s MB, total with audio: %s MB', video_size, total_size)
+        if total_size < MAX_FILE_SIZE_MB:
+            dict_video[f'{max_resol}p {total_size:.1f}mb'] = max_resol_link
         logger.debug(dict_video)
         return dict_video
 
