@@ -501,14 +501,22 @@ async def send_gallery_result(
                 logger.exception('Unexpected gallery media error for %s: %r', format_user(message), e)
                 await msg.edit_text(en.UNEXPECTED_ERROR)
                 break
-    for document in documents:
+    for chunk in chunks(documents, 10):
         while True:
             try:
-                await telegram_retry(
-                    lambda: message.answer_document(document.media, caption=document.caption),
-                    'sending gallery document',
-                    message,
-                )
+                if len(chunk) >= 2:
+                    await telegram_retry(
+                        lambda: message.answer_media_group(chunk),
+                        'sending gallery document group',
+                        message,
+                    )
+                else:
+                    document = chunk[0]
+                    await telegram_retry(
+                        lambda: message.answer_document(document.media, caption=document.caption),
+                        'sending gallery document',
+                        message,
+                    )
                 break
             except RetryAfter:
                 logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
