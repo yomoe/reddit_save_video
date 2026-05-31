@@ -144,7 +144,6 @@ class RedditVideoResult:
 class RedditImageResult:
     meta: RedditPostMeta
     url: str
-    nsfw: bool = False
 
 
 @dataclass(frozen=True)
@@ -160,14 +159,12 @@ class RedditGalleryItem:
 class RedditGalleryResult:
     meta: RedditPostMeta
     media: list[RedditGalleryItem]
-    nsfw: bool = False
 
 
 @dataclass(frozen=True)
 class RedgifsResult:
     meta: RedditPostMeta
     url_id: str
-    nsfw: bool = False
 
 
 @dataclass(frozen=True)
@@ -246,12 +243,16 @@ async def get_redgifs_video_sources(url_id: str) -> list[RedgifsVideoSource]:
                 urls = gif.get('urls', {})
                 has_audio = gif.get('hasAudio')
                 logger.info('RedGifs %s has_audio=%s url_keys=%s', url_id, has_audio, sorted(urls.keys()))
-                video_url = urls.get('hd') or urls.get('sd')
-                if video_url:
-                    return [
-                        RedgifsVideoSource(candidate, has_audio)
-                        for candidate in get_redgifs_video_candidates(video_url, has_audio)
-                    ]
+                video_sources = []
+                for video_url in (urls.get('hd'), urls.get('sd')):
+                    if not video_url:
+                        continue
+                    for candidate in get_redgifs_video_candidates(video_url, has_audio):
+                        source = RedgifsVideoSource(candidate, has_audio)
+                        if source not in video_sources:
+                            video_sources.append(source)
+                if video_sources:
+                    return video_sources
 
     async with aiohttp.ClientSession() as session:
         try:
@@ -293,12 +294,21 @@ async def get_redgifs(url_id: str) -> bytes or None:
             if source.has_audio and audio_present is False:
                 logger.warning('RedGifs %s candidate has no audio stream: %s', url_id, source.url)
                 continue
+            file_size_mb = len(file_data) / 1024 / 1024
+            if file_size_mb > MAX_FILE_SIZE_MB:
+                logger.warning(
+                    'RedGifs %s candidate is too large: %.1f MB url=%s',
+                    url_id,
+                    file_size_mb,
+                    source.url,
+                )
+                continue
 
             logger.info(
                 'Downloaded RedGifs %s from %s size=%.1f MB expected_audio=%s audio_stream=%s',
                 url_id,
                 source.url,
-                len(file_data) / 1024 / 1024,
+                file_size_mb,
                 source.has_audio,
                 audio_present,
             )
@@ -493,7 +503,6 @@ async def get_links(url: str) -> RedditResult | None:
                 permalink=url,
             ),
             url_id=direct_redgifs_id,
-            nsfw=True,
         )
 
     def as_dict(value):
@@ -597,7 +606,7 @@ async def get_links(url: str) -> RedditResult | None:
                 logger.warning('RedGifs post detected but id was not found: source=%s', meta.permalink)
                 return None
             logger.info('Detected Reddit RedGifs post id=%s source=%s', redgifs_id, meta.permalink)
-            return RedgifsResult(meta=meta, url_id=redgifs_id, nsfw=is_nsfw(res_json))
+            return RedgifsResult(meta=meta, url_id=redgifs_id)
 
         preview = as_dict(find_json.get('preview'))
         if preview.get('reddit_video_preview'):
@@ -651,7 +660,7 @@ async def get_links(url: str) -> RedditResult | None:
         if is_image(res_json):
             image_url = res_json[0]['data'].get('children', [{}])[0][
                 'data'].get('url', '')
-            return RedditImageResult(meta=meta, url=image_url, nsfw=is_nsfw(res_json))
+            return RedditImageResult(meta=meta, url=image_url)
 
         if is_gallery(res_json):
             gallery_data = get_find_json(res_json).get('gallery_data', {})
@@ -706,7 +715,6 @@ async def get_links(url: str) -> RedditResult | None:
             return RedditGalleryResult(
                 meta=get_post_meta(res_json),
                 media=gallery_items,
-                nsfw=is_nsfw(res_json),
             )
         return None
     except (
