@@ -13,6 +13,7 @@ from urllib.parse import quote, urlparse
 import aiohttp
 import ffmpeg
 from aiogram import Dispatcher, types
+from aiogram.utils.exceptions import NetworkError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import (
     InputMediaAnimation,
@@ -84,13 +85,13 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
 
     except ffmpeg._run.Error as ffmpeg_error:
         # Логируем ошибку ffmpeg
-        logger.error(f'FFmpeg error: {ffmpeg_error}')
+        logger.exception('FFmpeg error while combining video=%s audio=%s', video_link, audio_link)
         # Вместо общего исключения, возбуждаем наше специализированное исключение
         raise FFmpegError('Failed to concat video and audio files due to FFmpeg error.') from ffmpeg_error
 
 
     except Exception as e:
-        logger.error(f'An error occurred: {e}')
+        logger.exception('Failed to concat video=%s audio=%s: %r', video_link, audio_link, e)
         raise e
     finally:
         # Удаление временных файлов
@@ -112,6 +113,47 @@ async def concat_video_audio(video_link: str, audio_link: str) -> bytes:
 def chunks(gallery, count):
     for i in range(0, len(gallery), count):
         yield gallery[i:i + count]
+
+
+def format_user(message: types.Message) -> str:
+    user = message.from_user
+    if not user:
+        return 'unknown user'
+
+    username = f'@{user.username}' if user.username else 'no username'
+    full_name = user.full_name or 'no name'
+    return f'{full_name} ({username}, id {user.id})'
+
+
+def format_chat(message: types.Message) -> str:
+    chat = message.chat
+    title = chat.title or chat.full_name or chat.username or 'private chat'
+    return f'{title} ({chat.type}, id {chat.id})'
+
+
+def format_source(result) -> str:
+    meta = getattr(result, 'meta', None)
+    if meta and meta.permalink:
+        return meta.permalink
+    return 'no permalink'
+
+
+def log_request(message: types.Message) -> None:
+    logger.info(
+        'Reddit request from %s in %s: %s',
+        format_user(message),
+        format_chat(message),
+        message.text,
+    )
+
+
+def log_result(message: types.Message, result) -> None:
+    logger.info(
+        'Reddit result for %s: type=%s source=%s',
+        format_user(message),
+        type(result).__name__ if result else None,
+        format_source(result) if result else 'none',
+    )
 
 
 def normalize_hashtag(value: str | None) -> str | None:
@@ -185,14 +227,14 @@ def build_post_keyboard(meta: RedditPostMeta) -> InlineKeyboardMarkup | None:
     return keyboard
 
 
-def get_best_video_link(result: RedditVideoResult) -> str:
-    return max(result.variants, key=lambda variant: variant.resolution).url
+def get_best_video_variant(result: RedditVideoResult):
+    return max(result.variants, key=lambda variant: variant.resolution)
 
 
-def get_group_video_link(result: RedditVideoResult) -> str:
+def get_group_video_variant(result: RedditVideoResult):
     if len(result.variants) > 1:
-        return result.variants[-2].url
-    return result.variants[0].url
+        return result.variants[-2]
+    return result.variants[0]
 
 
 async def send_video_result(
@@ -208,14 +250,23 @@ async def send_video_result(
             return
 
         await msg.edit_text(text=en.DOWNLOADING_VIDEO)
-        video_link = video_selector(result)
+        variant = video_selector(result)
+        logger.info(
+            'Selected video for %s: %sp %.1fmb url=%s source=%s',
+            format_user(message),
+            variant.resolution,
+            variant.size_mb,
+            variant.url,
+            result.meta.permalink,
+        )
+        video_link = variant.url
         video_content = await download_video(video_link, result.audio_url)
         await msg.edit_text(text=en.SENDING_VIDEO)
         logger.info(
-            'Sending video for chat %s, %s id %s',
-            message.chat.title,
-            message.chat.type,
-            message.chat.id
+            'Sending video to %s in %s source=%s',
+            format_user(message),
+            format_chat(message),
+            result.meta.permalink,
         )
         await message.answer_video(
             video=video_content,
@@ -244,8 +295,12 @@ async def send_video_result(
         logging.critical('Failed to send video: %s', error)
         await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
 
+    except NetworkError as error:
+        logger.exception('Telegram network error while sending video to %s', format_user(message))
+        await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
+
     except Exception as error:
-        logging.critical('Unexpected error occurred: %s', error)
+        logger.exception('Unexpected error while sending video to %s: %r', format_user(message), error)
         await msg.edit_text(en.UNEXPECTED_ERROR)
 
 
@@ -261,10 +316,11 @@ async def send_redgifs_result(
         return
 
     logger.info(
-        'Sending redgifs for chat %s, %s id %s',
-        message.chat.title,
-        message.chat.type,
-        message.chat.id
+        'Sending redgifs to %s in %s redgifs_id=%s source=%s',
+        format_user(message),
+        format_chat(message),
+        result.url_id,
+        result.meta.permalink,
     )
     await message.answer_video(
         video,
@@ -281,10 +337,11 @@ async def send_image_result(
 ) -> None:
     await msg.edit_text(en.SENDING_IMAGE)
     logger.info(
-        'Sending image for chat %s, %s id %s',
-        message.chat.title,
-        message.chat.type,
-        message.chat.id
+        'Sending image to %s in %s image_url=%s source=%s',
+        format_user(message),
+        format_chat(message),
+        result.url,
+        result.meta.permalink,
     )
     try:
         ext = os.path.splitext(urlparse(result.url).path)[1].lower()
@@ -309,7 +366,7 @@ async def send_image_result(
         await msg.delete()
     except Exception as e:
         await msg.edit_text(en.UNEXPECTED_ERROR)
-        logger.error(f'Ошибка при отправке изображения: {e}')
+        logger.exception('Failed to send image to %s: %r', format_user(message), e)
 
 
 async def send_gallery_result(
@@ -318,13 +375,20 @@ async def send_gallery_result(
         result: RedditGalleryResult
 ) -> None:
     logger.info(
-        'Sending gallery for chat %s, %s id %s',
-        message.chat.title,
-        message.chat.type,
-        message.chat.id
+        'Sending gallery to %s in %s items=%s source=%s',
+        format_user(message),
+        format_chat(message),
+        len(result.media),
+        result.meta.permalink,
     )
+    caption = build_caption(result.meta)
     documents = [m for m in result.media if isinstance(m, InputMediaDocument)]
     media = [m for m in result.media if not isinstance(m, InputMediaDocument)]
+    for i, media_item in enumerate(media):
+        media_item.caption = caption if i == 0 else None
+    for i, document in enumerate(documents):
+        document.caption = caption if not media and i == 0 else None
+
     retry_delay = 5
     for chunk in chunks(media, 10):
         while True:
@@ -343,7 +407,7 @@ async def send_gallery_result(
                 await asyncio.sleep(retry_delay)
                 retry_delay *= 2
             except Exception as e:
-                logger.error(f'Unexpected error: {e}')
+                logger.exception('Unexpected gallery media error for %s: %r', format_user(message), e)
                 await msg.edit_text(en.UNEXPECTED_ERROR)
                 break
     for document in documents:
@@ -356,22 +420,18 @@ async def send_gallery_result(
                 await asyncio.sleep(retry_delay)
                 retry_delay *= 2
             except Exception as e:
-                logger.error(f'Unexpected error: {e}')
+                logger.exception('Unexpected gallery document error for %s: %r', format_user(message), e)
                 await msg.edit_text(en.UNEXPECTED_ERROR)
                 break
-    await message.answer(
-        build_caption(result.meta),
-        reply_markup=build_post_keyboard(result.meta),
-        disable_web_page_preview=True,
-    )
     await msg.delete()
 
 
 async def bot_get_links_private(message: types.Message, state: FSMContext) -> None:
     """Download and send the best available video."""
     msg = await message.answer(en.GET_LINKS_FOR_VIDEO)
+    log_request(message)
     result = await get_links(message.text)
-    logger.debug(result)
+    log_result(message, result)
     if not result:
         logger.info('The links dictionary is empty, sending an error message')
         await msg.edit_text(en.VIDEO_NOT_FOUND)
@@ -385,7 +445,7 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
     elif isinstance(result, RedditGalleryResult):
         await send_gallery_result(message, msg, result)
     else:
-        await send_video_result(message, msg, result, get_best_video_link)
+        await send_video_result(message, msg, result, get_best_video_variant)
 
 
 async def download_video(video_link: str, audio_link: str) -> bytes:
@@ -415,8 +475,9 @@ async def download_file(url: str) -> bytes:
 async def bot_get_links_group(message: types.Message) -> None:
     """Send video to a group or channel in the second-to-last quality"""
     msg = await message.answer(text=en.GET_LINKS_FOR_VIDEO)
+    log_request(message)
     result = await get_links(message.text)
-    logger.debug(result)
+    log_result(message, result)
     try:
         # Попытка удалить сообщение пользователя
         await message.delete()
@@ -438,7 +499,7 @@ async def bot_get_links_group(message: types.Message) -> None:
     elif isinstance(result, RedditGalleryResult):
         await send_gallery_result(message, msg, result)
     else:
-        await send_video_result(message, msg, result, get_group_video_link)
+        await send_video_result(message, msg, result, get_group_video_variant)
 
 
 def register_get_links(dp: Dispatcher) -> None:
