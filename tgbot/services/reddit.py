@@ -11,7 +11,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 import aiohttp
 import praw
 import prawcore
-from aiogram.types import InputMediaDocument, InputMediaPhoto
+from aiogram.types import InputMediaDocument, InputMediaPhoto, InputMediaVideo
 from bs4 import BeautifulSoup
 from environs import Env
 
@@ -25,9 +25,12 @@ HEADERS = {
     'user-agent': REDDIT_USER_AGENT,
     'accept': 'application/json',
 }
-API_URL_REDGIFS = 'https://api.redgifs.com/v1/gifs/'
+API_URL_REDGIFS_V1 = 'https://api.redgifs.com/v1/gifs/'
+API_URL_REDGIFS_V2 = 'https://api.redgifs.com/v2/gifs/'
+API_URL_REDGIFS_AUTH = 'https://api.redgifs.com/v2/auth/temporary'
 MAX_FILE_SIZE_MB = 48
 reddit_client = None
+redgifs_token = None
 
 
 def get_video_resolution(filename: str) -> int | None:
@@ -85,7 +88,7 @@ class RedditImageResult:
 @dataclass(frozen=True)
 class RedditGalleryResult:
     meta: RedditPostMeta
-    media: list[InputMediaDocument | InputMediaPhoto]
+    media: list[InputMediaDocument | InputMediaPhoto | InputMediaVideo]
 
 
 @dataclass(frozen=True)
@@ -125,20 +128,70 @@ async def fetch_text(url: str) -> str:
             return await response.text()
 
 
-async def get_redgifs(url_id: str) -> bytes or None:
-    """Get the video from redgifs.com."""
+async def get_redgifs_token() -> str | None:
+    global redgifs_token
+    if redgifs_token:
+        return redgifs_token
+
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(headers=HEADERS, timeout=timeout) as session:
+        try:
+            async with session.get(API_URL_REDGIFS_AUTH) as response:
+                response.raise_for_status()
+                auth_json = await response.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError) as error:
+            logger.error('Error getting RedGifs auth token: %s', error)
+            return None
+
+    redgifs_token = auth_json.get('token')
+    return redgifs_token
+
+
+async def get_redgifs_video_url(url_id: str) -> str | None:
+    global redgifs_token
+    token = await get_redgifs_token()
+    if token:
+        timeout = aiohttp.ClientTimeout(total=10)
+        headers = {**HEADERS, 'Authorization': f'Bearer {token}'}
+        async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
+            try:
+                async with session.get(API_URL_REDGIFS_V2 + url_id) as response:
+                    if response.status == 401:
+                        redgifs_token = None
+                        return await get_redgifs_video_url(url_id)
+                    response.raise_for_status()
+                    redgifs_json = await response.json()
+            except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError) as error:
+                logger.error('Error getting RedGifs v2 json from %s: %s', url_id, error)
+            else:
+                gif = redgifs_json.get('gif', {})
+                urls = gif.get('urls', {})
+                logger.info('RedGifs %s has_audio=%s', url_id, gif.get('hasAudio'))
+                video_url = urls.get('hd') or urls.get('sd')
+                if video_url:
+                    return video_url
+
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.get(API_URL_REDGIFS + url_id) as response:
+            async with session.get(API_URL_REDGIFS_V1 + url_id) as response:
                 redgifs_json = await response.json()
-                video_url = (redgifs_json.get('gif', {}).get('urls', {}).get(
-                    'hd') or redgifs_json.get('gfyItem', {}).get(
-                    'content_urls', {}).get(
-                    'mp4', {}).get(
-                    'url'))
         except (aiohttp.ClientError, json.JSONDecodeError):
-            logger.error('Error getting json from %s', url_id)
+            logger.error('Error getting RedGifs v1 json from %s', url_id)
             return None
+
+    return (redgifs_json.get('gif', {}).get('urls', {}).get(
+        'hd') or redgifs_json.get('gfyItem', {}).get(
+        'content_urls', {}).get(
+        'mp4', {}).get(
+        'url'))
+
+
+async def get_redgifs(url_id: str) -> bytes or None:
+    """Get the video from redgifs.com."""
+    video_url = await get_redgifs_video_url(url_id)
+    if not video_url:
+        return None
+    async with aiohttp.ClientSession() as session:
         try:
             async with session.get(video_url) as video:
                 file_data = await video.read()
@@ -470,12 +523,14 @@ async def get_links(url: str) -> RedditResult | None:
             for i, item in enumerate(gallery_data.get('items', [])):
                 media_meta = media_metadata.get(item['media_id'], {})
                 media = media_meta.get('s', {})
-                url = html.unescape(media.get('u') or media.get('gif') or media.get('mp4', ''))
+                url = html.unescape(media.get('mp4') or media.get('u') or media.get('gif', ''))
                 if not url:
                     logger.warning('Skipping gallery item %s due to missing media fields', item.get('media_id'))
                     continue
                 mime = media_meta.get('m', '')
-                if 'gif' in mime:
+                if media.get('mp4'):
+                    photos.append(InputMediaVideo(url))
+                elif 'gif' in mime:
                     photos.append(InputMediaDocument(url))
                 else:
                     photos.append(InputMediaPhoto(url))

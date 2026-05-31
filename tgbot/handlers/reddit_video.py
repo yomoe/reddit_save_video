@@ -13,12 +13,13 @@ from urllib.parse import urlparse
 import aiohttp
 import ffmpeg
 from aiogram import Dispatcher, types
-from aiogram.utils.exceptions import NetworkError
+from aiogram.utils.exceptions import MessageNotModified, NetworkError, WrongFileIdentifier
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import (
     InputMediaAnimation,
     InputMediaDocument,
     InputFile,
+    InputMediaVideo,
 )
 
 from tgbot.lexicon import lexicon_en as en
@@ -158,6 +159,13 @@ def log_result(message: types.Message, result) -> None:
         type(result).__name__ if result else None,
         format_source(result) if result else 'none',
     )
+
+
+async def safe_edit_text(msg: types.Message, text: str) -> None:
+    try:
+        await msg.edit_text(text)
+    except MessageNotModified:
+        logger.debug('Skip message edit because text is unchanged: %s', text)
 
 
 def normalize_hashtag(value: str | None) -> str | None:
@@ -468,6 +476,13 @@ async def send_gallery_result(
     for i, document in enumerate(documents):
         document.caption = caption if not media and i == 0 else None
 
+    async def send_document(document: InputMediaDocument) -> None:
+        await telegram_retry(
+            lambda: message.answer_document(document.media, caption=document.caption),
+            'sending gallery document',
+            message,
+        )
+
     retry_delay = 5
     for chunk in chunks(media, 10):
         while True:
@@ -486,6 +501,12 @@ async def send_gallery_result(
                             'sending gallery animation',
                             message,
                         )
+                    elif isinstance(media_item, InputMediaVideo):
+                        await telegram_retry(
+                            lambda: message.answer_video(media_item.media, caption=media_item.caption),
+                            'sending gallery video',
+                            message,
+                        )
                     else:
                         await telegram_retry(
                             lambda: message.answer_photo(media_item.media, caption=media_item.caption),
@@ -499,24 +520,27 @@ async def send_gallery_result(
                 retry_delay *= 2
             except Exception as e:
                 logger.exception('Unexpected gallery media error for %s: %r', format_user(message), e)
-                await msg.edit_text(en.UNEXPECTED_ERROR)
+                await safe_edit_text(msg, en.UNEXPECTED_ERROR)
                 break
     for chunk in chunks(documents, 10):
         while True:
             try:
                 if len(chunk) >= 2:
-                    await telegram_retry(
-                        lambda: message.answer_media_group(chunk),
-                        'sending gallery document group',
-                        message,
-                    )
+                    try:
+                        await telegram_retry(
+                            lambda: message.answer_media_group(chunk),
+                            'sending gallery document group',
+                            message,
+                        )
+                    except WrongFileIdentifier:
+                        logger.warning(
+                            'Telegram rejected gallery document group for %s. Falling back to single documents.',
+                            format_user(message),
+                        )
+                        for document in chunk:
+                            await send_document(document)
                 else:
-                    document = chunk[0]
-                    await telegram_retry(
-                        lambda: message.answer_document(document.media, caption=document.caption),
-                        'sending gallery document',
-                        message,
-                    )
+                    await send_document(chunk[0])
                 break
             except RetryAfter:
                 logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
@@ -524,7 +548,7 @@ async def send_gallery_result(
                 retry_delay *= 2
             except Exception as e:
                 logger.exception('Unexpected gallery document error for %s: %r', format_user(message), e)
-                await msg.edit_text(en.UNEXPECTED_ERROR)
+                await safe_edit_text(msg, en.UNEXPECTED_ERROR)
                 break
     await msg.delete()
 
