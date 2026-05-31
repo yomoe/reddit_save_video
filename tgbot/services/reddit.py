@@ -222,6 +222,9 @@ async def get_reddit_listing(url: str) -> list | None:
 
 async def get_links(url: str) -> dict:
     """Extract video information from a Reddit URL."""
+    def as_dict(value):
+        return value if isinstance(value, dict) else {}
+
     def get_find_json(res_json):
         find_json = res_json[0]['data'].get('children', [{}])[0]['data']
 
@@ -242,17 +245,12 @@ async def get_links(url: str) -> dict:
         return file == 'image'
 
     def is_nsfw(res_json):
-        try:
-            return 'nsfw' in get_find_json(res_json).get('thumbnail')
-        except AttributeError:
-            return False
+        thumbnail = get_find_json(res_json).get('thumbnail') or ''
+        return 'nsfw' in thumbnail
 
     def is_redgifs(res_json):
-        try:
-            return 'redgifs.com' in get_find_json(res_json).get('media').get(
-                'type')
-        except AttributeError:
-            return False
+        media = as_dict(get_find_json(res_json).get('media'))
+        return 'redgifs.com' in (media.get('type') or '')
 
     def is_gallery(res_json):
         try:
@@ -289,9 +287,9 @@ async def get_links(url: str) -> dict:
 
         find_json = get_find_json(res_json)
 
-        if find_json.get('preview', {}).get('reddit_video_preview'):
-            find_json = get_find_json(res_json).get('preview', {}).get(
-                'reddit_video_preview', {})
+        preview = as_dict(find_json.get('preview'))
+        if preview.get('reddit_video_preview'):
+            find_json = preview.get('reddit_video_preview') or {}
 
             dash_url = find_json.get('dash_url')
             if dash_url:
@@ -303,9 +301,9 @@ async def get_links(url: str) -> dict:
             fallback_url = find_json.get('fallback_url')
             return await get_video_links(fallback_url, video_link)
 
-        if get_find_json(res_json).get('secure_media', {}).get('reddit_video'):
-            find_json = get_find_json(res_json).get('secure_media', {}).get(
-                'reddit_video', {})
+        secure_media = as_dict(get_find_json(res_json).get('secure_media'))
+        if secure_media.get('reddit_video'):
+            find_json = secure_media.get('reddit_video') or {}
 
             dash_url = find_json.get('dash_url')
             if dash_url:
