@@ -169,6 +169,110 @@ async def send_video_result(
         await msg.edit_text(en.UNEXPECTED_ERROR)
 
 
+async def send_redgifs_result(
+        message: types.Message,
+        msg: types.Message,
+        result: RedgifsResult
+) -> None:
+    await msg.edit_text(en.SENDING_REDGIFS)
+    video = await get_redgifs(result.url_id)
+    if not video:
+        await msg.edit_text(en.VIDEO_NOT_FOUND)
+        return
+
+    logger.info(
+        'Sending redgifs for chat %s, %s id %s',
+        message.chat.title,
+        message.chat.type,
+        message.chat.id
+    )
+    await message.answer_video(video, caption=result.caption)
+    await msg.delete()
+
+
+async def send_image_result(
+        message: types.Message,
+        msg: types.Message,
+        result: RedditImageResult
+) -> None:
+    await msg.edit_text(en.SENDING_IMAGE)
+    logger.info(
+        'Sending image for chat %s, %s id %s',
+        message.chat.title,
+        message.chat.type,
+        message.chat.id
+    )
+    try:
+        ext = os.path.splitext(urlparse(result.url).path)[1].lower()
+        if ext == '.gif':
+            try:
+                data = await download_file(result.url)
+            except Exception as e:
+                logger.error('Failed to download gif: %s', e)
+                await msg.edit_text(en.UNEXPECTED_ERROR)
+                return
+            await message.answer_animation(
+                InputFile(BytesIO(data), filename='file.gif'),
+                caption=result.caption
+            )
+        else:
+            await message.answer_photo(result.url, caption=result.caption)
+        await msg.delete()
+    except Exception as e:
+        await msg.edit_text(en.UNEXPECTED_ERROR)
+        logger.error(f'Ошибка при отправке изображения: {e}')
+
+
+async def send_gallery_result(
+        message: types.Message,
+        msg: types.Message,
+        result: RedditGalleryResult
+) -> None:
+    logger.info(
+        'Sending gallery for chat %s, %s id %s',
+        message.chat.title,
+        message.chat.type,
+        message.chat.id
+    )
+    documents = [m for m in result.media if isinstance(m, InputMediaDocument)]
+    media = [m for m in result.media if not isinstance(m, InputMediaDocument)]
+    retry_delay = 5
+    for chunk in chunks(media, 10):
+        while True:
+            try:
+                if len(chunk) >= 2:
+                    await message.answer_media_group(chunk)
+                else:
+                    media_item = chunk[0]
+                    if isinstance(media_item, InputMediaAnimation):
+                        await message.answer_animation(media_item.media, caption=media_item.caption)
+                    else:
+                        await message.answer_photo(media_item.media, caption=media_item.caption)
+                break
+            except RetryAfter:
+                logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2
+            except Exception as e:
+                logger.error(f'Unexpected error: {e}')
+                await msg.edit_text(en.UNEXPECTED_ERROR)
+                break
+    for document in documents:
+        while True:
+            try:
+                await message.answer_document(document.media, caption=document.caption)
+                break
+            except RetryAfter:
+                logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2
+            except Exception as e:
+                logger.error(f'Unexpected error: {e}')
+                await msg.edit_text(en.UNEXPECTED_ERROR)
+                break
+    await msg.delete()
+
+
 async def bot_get_links_private(message: types.Message, state: FSMContext) -> None:
     """Download and send the best available video."""
     msg = await message.answer(en.GET_LINKS_FOR_VIDEO)
@@ -181,93 +285,11 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
         logger.info('Video deleted, sending an error message')
         await msg.edit_text(en.SOURCE_DELETED)
     elif isinstance(result, RedgifsResult):
-        await msg.edit_text(en.SENDING_REDGIFS)
-        video = await get_redgifs(result.url_id)
-        if not video:
-            await msg.edit_text(en.VIDEO_NOT_FOUND)
-        else:
-            logger.info(
-                'Send redgifs to user %s (%s) id %s',
-                message.from_user.username,
-                message.from_user.full_name,
-                message.from_user.id
-            )
-            await message.answer_video(video, caption=result.caption)
-            await msg.delete()
+        await send_redgifs_result(message, msg, result)
     elif isinstance(result, RedditImageResult):
-        await msg.edit_text(en.SENDING_IMAGE)
-        logger.info(
-            'Send is_image to user %s (%s) id %s',
-            message.from_user.username,
-            message.from_user.full_name,
-            message.from_user.id
-        )
-        try:
-            ext = os.path.splitext(urlparse(result.url).path)[1].lower()
-            if ext == '.gif':
-                try:
-                    data = await download_file(result.url)
-                except Exception as e:
-                    logger.error('Failed to download gif: %s', e)
-                    await msg.edit_text(en.UNEXPECTED_ERROR)
-                    return
-                await message.answer_animation(
-                    InputFile(BytesIO(data), filename='file.gif'),
-                    caption=result.caption
-                )
-            else:
-                await message.answer_photo(
-                    result.url, caption=result.caption)
-            await msg.delete()
-        except Exception as e:
-            await msg.edit_text(en.UNEXPECTED_ERROR)
-            logger.error(f'Ошибка при отправке изображения: {e}')
+        await send_image_result(message, msg, result)
     elif isinstance(result, RedditGalleryResult):
-        # await msg.edit_text(en.SENDING_GALLERY)
-        logger.info(
-            'Send gallery to user %s (%s) id %s',
-            message.from_user.username,
-            message.from_user.full_name,
-            message.from_user.id
-        )
-        gallery = result.media
-        documents = [m for m in gallery if isinstance(m, InputMediaDocument)]
-        media = [m for m in gallery if not isinstance(m, InputMediaDocument)]
-        retry_delay = 5
-        for chunk in chunks(media, 10):
-            while True:
-                try:
-                    if len(chunk) >= 2:
-                        await message.answer_media_group(chunk)
-                    else:
-                        media_item = chunk[0]
-                        if isinstance(media_item, InputMediaAnimation):
-                            await message.answer_animation(media_item.media, caption=media_item.caption)
-                        else:
-                            await message.answer_photo(media_item.media, caption=media_item.caption)
-                    break  # Выйти из цикла после успешной отправки
-                except RetryAfter as e:
-                    logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
-                    await asyncio.sleep(retry_delay)
-                    retry_delay *= 2  # Увеличиваем задержку в 2 раза для следующей попытки
-                except Exception as e:
-                    logger.error(f'Unexpected error: {e}')
-                    await msg.edit_text(en.UNEXPECTED_ERROR)
-                    break  # Прерываем цикл в случае других ошибок
-        for document in documents:
-            while True:
-                try:
-                    await message.answer_document(document.media, caption=document.caption)
-                    break
-                except RetryAfter as e:
-                    logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
-                    await asyncio.sleep(retry_delay)
-                    retry_delay *= 2
-                except Exception as e:
-                    logger.error(f'Unexpected error: {e}')
-                    await msg.edit_text(en.UNEXPECTED_ERROR)
-                    break
-        await msg.delete()
+        await send_gallery_result(message, msg, result)
     else:
         await send_video_result(message, msg, result, get_best_video_link)
 
@@ -316,93 +338,11 @@ async def bot_get_links_group(message: types.Message) -> None:
         logger.info('Video deleted, sending an error message')
         await msg.edit_text(en.SOURCE_DELETED)
     elif isinstance(result, RedgifsResult):
-        await msg.edit_text(en.SENDING_REDGIFS)
-        video = await get_redgifs(result.url_id)
-        if not video:
-            await msg.edit_text(en.VIDEO_NOT_FOUND)
-        else:
-            logger.info(
-                'Sending redgifs for chat %s, %s id %s',
-                message.chat.title,
-                message.chat.type,
-                message.chat.id
-            )
-            await message.answer_video(video, caption=result.caption)
-            await msg.delete()
+        await send_redgifs_result(message, msg, result)
     elif isinstance(result, RedditImageResult):
-        await msg.edit_text(en.SENDING_IMAGE)
-        logger.info(
-            'Sending image for chat %s, %s id %s',
-            message.chat.title,
-            message.chat.type,
-            message.chat.id
-        )
-        try:
-            ext = os.path.splitext(urlparse(result.url).path)[1].lower()
-            if ext == '.gif':
-                try:
-                    data = await download_file(result.url)
-                except Exception as e:
-                    logger.error('Failed to download gif: %s', e)
-                    await msg.edit_text(en.UNEXPECTED_ERROR)
-                    return
-                await message.answer_animation(
-                    InputFile(BytesIO(data), filename='file.gif'),
-                    caption=result.caption
-                )
-            else:
-                await message.answer_photo(
-                    result.url, caption=result.caption)
-            await msg.delete()
-        except Exception as e:
-            await msg.edit_text(en.UNEXPECTED_ERROR)
-            logger.error(f'Ошибка при отправке изображения: {e}')
+        await send_image_result(message, msg, result)
     elif isinstance(result, RedditGalleryResult):
-        # await msg.edit_text(en.SENDING_GALLERY)
-        logger.info(
-            'Sending gallery for chat %s, %s id %s',
-            message.chat.title,
-            message.chat.type,
-            message.chat.id
-        )
-        gallery = result.media
-        documents = [m for m in gallery if isinstance(m, InputMediaDocument)]
-        media = [m for m in gallery if not isinstance(m, InputMediaDocument)]
-        retry_delay = 5
-        for chunk in chunks(media, 10):
-            while True:
-                try:
-                    if len(chunk) >= 2:
-                        await message.answer_media_group(chunk)
-                    else:
-                        media_item = chunk[0]
-                        if isinstance(media_item, InputMediaAnimation):
-                            await message.answer_animation(media_item.media, caption=media_item.caption)
-                        else:
-                            await message.answer_photo(media_item.media, caption=media_item.caption)
-                    break  # Выйти из цикла после успешной отправки
-                except RetryAfter as e:
-                    logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
-                    await asyncio.sleep(retry_delay)
-                    retry_delay *= 2  # Увеличиваем задержку в 2 раза для следующей попытки
-                except Exception as e:
-                    logger.error(f'Unexpected error: {e}')
-                    await msg.edit_text(en.UNEXPECTED_ERROR)
-                    break  # Прерываем цикл в случае других ошибок
-        for document in documents:
-            while True:
-                try:
-                    await message.answer_document(document.media, caption=document.caption)
-                    break
-                except RetryAfter as e:
-                    logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
-                    await asyncio.sleep(retry_delay)
-                    retry_delay *= 2
-                except Exception as e:
-                    logger.error(f'Unexpected error: {e}')
-                    await msg.edit_text(en.UNEXPECTED_ERROR)
-                    break
-        await msg.delete()
+        await send_gallery_result(message, msg, result)
     else:
         await send_video_result(message, msg, result, get_group_video_link)
 
