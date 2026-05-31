@@ -8,7 +8,7 @@ import logging
 import os
 import tempfile
 from io import BytesIO
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 import aiohttp
 import ffmpeg
@@ -215,15 +215,8 @@ def build_post_keyboard(meta: RedditPostMeta) -> InlineKeyboardMarkup | None:
     if not meta.permalink:
         return None
 
-    share_url = 'https://t.me/share/url?url={url}&text={text}'.format(
-        url=quote(meta.permalink, safe=''),
-        text=quote(meta.title or 'Reddit post', safe=''),
-    )
     keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        InlineKeyboardButton(text='Поделиться', url=share_url),
-        InlineKeyboardButton(text='Оригинал', url=meta.permalink),
-    )
+    keyboard.add(InlineKeyboardButton(text='Original', url=meta.permalink))
     return keyboard
 
 
