@@ -25,6 +25,7 @@ from tgbot.lexicon import lexicon_en as en
 from tgbot.services.reddit import (
     DeletedResult,
     HEADERS,
+    MAX_FILE_SIZE_MB,
     RedditGalleryResult,
     RedditImageResult,
     RedditPostMeta,
@@ -36,6 +37,9 @@ from tgbot.services.reddit import (
 
 logger = logging.getLogger(__name__)
 CAPTION_LIMIT = 1024
+TELEGRAM_RETRY_ATTEMPTS = 3
+TELEGRAM_RETRY_DELAY = 2
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 
 class FFmpegError(Exception):
@@ -220,14 +224,41 @@ def build_post_keyboard(meta: RedditPostMeta) -> InlineKeyboardMarkup | None:
     return keyboard
 
 
-def get_best_video_variant(result: RedditVideoResult):
-    return max(result.variants, key=lambda variant: variant.resolution)
+async def telegram_retry(action, description: str, message: types.Message):
+    retry_delay = TELEGRAM_RETRY_DELAY
+    for attempt in range(1, TELEGRAM_RETRY_ATTEMPTS + 1):
+        try:
+            return await action()
+        except NetworkError:
+            if attempt == TELEGRAM_RETRY_ATTEMPTS:
+                logger.exception(
+                    'Telegram network error after %s attempts while %s for %s',
+                    attempt,
+                    description,
+                    format_user(message),
+                )
+                raise
+            logger.warning(
+                'Telegram network error while %s for %s. Retry %s/%s in %s seconds',
+                description,
+                format_user(message),
+                attempt + 1,
+                TELEGRAM_RETRY_ATTEMPTS,
+                retry_delay,
+            )
+            await asyncio.sleep(retry_delay)
+            retry_delay *= 2
 
 
-def get_group_video_variant(result: RedditVideoResult):
+def get_best_video_variants(result: RedditVideoResult):
+    return sorted(result.variants, key=lambda variant: variant.resolution, reverse=True)
+
+
+def get_group_video_variants(result: RedditVideoResult):
     if len(result.variants) > 1:
-        return result.variants[-2]
-    return result.variants[0]
+        selected_index = len(result.variants) - 2
+        return list(reversed(result.variants[:selected_index + 1]))
+    return result.variants
 
 
 async def send_video_result(
@@ -243,17 +274,53 @@ async def send_video_result(
             return
 
         await msg.edit_text(text=en.DOWNLOADING_VIDEO)
-        variant = video_selector(result)
+        video_content = None
+        selected_variant = None
+        for variant in video_selector(result):
+            logger.info(
+                'Selected video candidate for %s: %sp %.1fmb url=%s source=%s',
+                format_user(message),
+                variant.resolution,
+                variant.size_mb,
+                variant.url,
+                result.meta.permalink,
+            )
+            current_video_content = await download_video(variant.url, result.audio_url)
+            current_size = len(current_video_content)
+            logger.info(
+                'Downloaded video candidate for %s: %sp final_size=%.1fmb source=%s',
+                format_user(message),
+                variant.resolution,
+                current_size / 1024 / 1024,
+                result.meta.permalink,
+            )
+            if current_size <= MAX_FILE_SIZE_BYTES:
+                video_content = current_video_content
+                selected_variant = variant
+                break
+
+            logger.warning(
+                'Skipping video candidate for %s: %sp final_size=%.1fmb exceeds %.1fmb source=%s',
+                format_user(message),
+                variant.resolution,
+                current_size / 1024 / 1024,
+                MAX_FILE_SIZE_MB,
+                result.meta.permalink,
+            )
+
+        if video_content is None or selected_variant is None:
+            logger.info('No downloaded video variants fit the final size limit')
+            await msg.edit_text(en.VIDEO_NOT_FOUND)
+            return
+
         logger.info(
             'Selected video for %s: %sp %.1fmb url=%s source=%s',
             format_user(message),
-            variant.resolution,
-            variant.size_mb,
-            variant.url,
+            selected_variant.resolution,
+            selected_variant.size_mb,
+            selected_variant.url,
             result.meta.permalink,
         )
-        video_link = variant.url
-        video_content = await download_video(video_link, result.audio_url)
         await msg.edit_text(text=en.SENDING_VIDEO)
         logger.info(
             'Sending video to %s in %s source=%s',
@@ -261,10 +328,14 @@ async def send_video_result(
             format_chat(message),
             result.meta.permalink,
         )
-        await message.answer_video(
-            video=video_content,
-            caption=build_caption(result.meta),
-            reply_markup=build_post_keyboard(result.meta),
+        await telegram_retry(
+            lambda: message.answer_video(
+                video=video_content,
+                caption=build_caption(result.meta),
+                reply_markup=build_post_keyboard(result.meta),
+            ),
+            'sending video',
+            message,
         )
         await msg.delete()
 
@@ -315,12 +386,19 @@ async def send_redgifs_result(
         result.url_id,
         result.meta.permalink,
     )
-    await message.answer_video(
-        video,
-        caption=build_caption(result.meta),
-        reply_markup=build_post_keyboard(result.meta),
-    )
-    await msg.delete()
+    try:
+        await telegram_retry(
+            lambda: message.answer_video(
+                video,
+                caption=build_caption(result.meta),
+                reply_markup=build_post_keyboard(result.meta),
+            ),
+            'sending redgifs',
+            message,
+        )
+        await msg.delete()
+    except NetworkError:
+        await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
 
 
 async def send_image_result(
@@ -345,16 +423,24 @@ async def send_image_result(
                 logger.error('Failed to download gif: %s', e)
                 await msg.edit_text(en.UNEXPECTED_ERROR)
                 return
-            await message.answer_animation(
-                InputFile(BytesIO(data), filename='file.gif'),
-                caption=build_caption(result.meta),
-                reply_markup=build_post_keyboard(result.meta),
+            await telegram_retry(
+                lambda: message.answer_animation(
+                    InputFile(BytesIO(data), filename='file.gif'),
+                    caption=build_caption(result.meta),
+                    reply_markup=build_post_keyboard(result.meta),
+                ),
+                'sending gif image',
+                message,
             )
         else:
-            await message.answer_photo(
-                result.url,
-                caption=build_caption(result.meta),
-                reply_markup=build_post_keyboard(result.meta),
+            await telegram_retry(
+                lambda: message.answer_photo(
+                    result.url,
+                    caption=build_caption(result.meta),
+                    reply_markup=build_post_keyboard(result.meta),
+                ),
+                'sending image',
+                message,
             )
         await msg.delete()
     except Exception as e:
@@ -387,13 +473,25 @@ async def send_gallery_result(
         while True:
             try:
                 if len(chunk) >= 2:
-                    await message.answer_media_group(chunk)
+                    await telegram_retry(
+                        lambda: message.answer_media_group(chunk),
+                        'sending gallery media group',
+                        message,
+                    )
                 else:
                     media_item = chunk[0]
                     if isinstance(media_item, InputMediaAnimation):
-                        await message.answer_animation(media_item.media, caption=media_item.caption)
+                        await telegram_retry(
+                            lambda: message.answer_animation(media_item.media, caption=media_item.caption),
+                            'sending gallery animation',
+                            message,
+                        )
                     else:
-                        await message.answer_photo(media_item.media, caption=media_item.caption)
+                        await telegram_retry(
+                            lambda: message.answer_photo(media_item.media, caption=media_item.caption),
+                            'sending gallery photo',
+                            message,
+                        )
                 break
             except RetryAfter:
                 logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
@@ -406,7 +504,11 @@ async def send_gallery_result(
     for document in documents:
         while True:
             try:
-                await message.answer_document(document.media, caption=document.caption)
+                await telegram_retry(
+                    lambda: message.answer_document(document.media, caption=document.caption),
+                    'sending gallery document',
+                    message,
+                )
                 break
             except RetryAfter:
                 logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
@@ -438,7 +540,7 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
     elif isinstance(result, RedditGalleryResult):
         await send_gallery_result(message, msg, result)
     else:
-        await send_video_result(message, msg, result, get_best_video_variant)
+        await send_video_result(message, msg, result, get_best_video_variants)
 
 
 async def download_video(video_link: str, audio_link: str) -> bytes:
@@ -492,7 +594,7 @@ async def bot_get_links_group(message: types.Message) -> None:
     elif isinstance(result, RedditGalleryResult):
         await send_gallery_result(message, msg, result)
     else:
-        await send_video_result(message, msg, result, get_group_video_variant)
+        await send_video_result(message, msg, result, get_group_video_variants)
 
 
 def register_get_links(dp: Dispatcher) -> None:
