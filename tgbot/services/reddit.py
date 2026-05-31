@@ -144,6 +144,7 @@ class RedditVideoResult:
 class RedditImageResult:
     meta: RedditPostMeta
     url: str
+    nsfw: bool = False
 
 
 @dataclass(frozen=True)
@@ -159,12 +160,14 @@ class RedditGalleryItem:
 class RedditGalleryResult:
     meta: RedditPostMeta
     media: list[RedditGalleryItem]
+    nsfw: bool = False
 
 
 @dataclass(frozen=True)
 class RedgifsResult:
     meta: RedditPostMeta
     url_id: str
+    nsfw: bool = False
 
 
 @dataclass(frozen=True)
@@ -490,6 +493,7 @@ async def get_links(url: str) -> RedditResult | None:
                 permalink=url,
             ),
             url_id=direct_redgifs_id,
+            nsfw=True,
         )
 
     def as_dict(value):
@@ -527,6 +531,8 @@ async def get_links(url: str) -> RedditResult | None:
         return file == 'image'
 
     def is_nsfw(res_json):
+        if get_find_json(res_json).get('over_18'):
+            return True
         thumbnail = get_find_json(res_json).get('thumbnail') or ''
         return 'nsfw' in thumbnail
 
@@ -591,7 +597,7 @@ async def get_links(url: str) -> RedditResult | None:
                 logger.warning('RedGifs post detected but id was not found: source=%s', meta.permalink)
                 return None
             logger.info('Detected Reddit RedGifs post id=%s source=%s', redgifs_id, meta.permalink)
-            return RedgifsResult(meta=meta, url_id=redgifs_id)
+            return RedgifsResult(meta=meta, url_id=redgifs_id, nsfw=is_nsfw(res_json))
 
         preview = as_dict(find_json.get('preview'))
         if preview.get('reddit_video_preview'):
@@ -617,6 +623,7 @@ async def get_links(url: str) -> RedditResult | None:
                 meta=meta,
                 audio_url=video_links.audio_url,
                 variants=video_links.variants,
+                nsfw=is_nsfw(res_json),
             )
 
         secure_media = as_dict(get_find_json(res_json).get('secure_media'))
@@ -644,7 +651,7 @@ async def get_links(url: str) -> RedditResult | None:
         if is_image(res_json):
             image_url = res_json[0]['data'].get('children', [{}])[0][
                 'data'].get('url', '')
-            return RedditImageResult(meta=meta, url=image_url)
+            return RedditImageResult(meta=meta, url=image_url, nsfw=is_nsfw(res_json))
 
         if is_gallery(res_json):
             gallery_data = get_find_json(res_json).get('gallery_data', {})
@@ -696,7 +703,11 @@ async def get_links(url: str) -> RedditResult | None:
                         media_id=media_id,
                         mime=mime,
                     ))
-            return RedditGalleryResult(meta=get_post_meta(res_json), media=gallery_items)
+            return RedditGalleryResult(
+                meta=get_post_meta(res_json),
+                media=gallery_items,
+                nsfw=is_nsfw(res_json),
+            )
         return None
     except (
             aiohttp.ClientError,

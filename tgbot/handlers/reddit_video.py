@@ -145,6 +145,10 @@ def format_source(result) -> str:
     return 'no permalink'
 
 
+def message_thread_id(message: types.Message) -> int | None:
+    return message.message_thread_id if message.is_topic_message else None
+
+
 def log_request(message: types.Message) -> None:
     logger.info(
         'Reddit request from %s in %s: %s',
@@ -339,10 +343,13 @@ async def send_video_result(
             result.meta.permalink,
         )
         await telegram_retry(
-            lambda: message.answer_video(
+            lambda: message.bot.send_video(
+                chat_id=message.chat.id,
+                message_thread_id=message_thread_id(message),
                 video=video_content,
                 caption=build_caption(result.meta),
                 reply_markup=build_post_keyboard(result.meta),
+                has_spoiler=result.nsfw,
             ),
             'sending video',
             message,
@@ -398,11 +405,14 @@ async def send_redgifs_result(
     )
     try:
         await telegram_retry(
-            lambda: message.answer_video(
-                InputFile(BytesIO(video), filename=f'{result.url_id}.mp4'),
+            lambda: message.bot.send_video(
+                chat_id=message.chat.id,
+                message_thread_id=message_thread_id(message),
+                video=InputFile(BytesIO(video), filename=f'{result.url_id}.mp4'),
                 caption=build_caption(result.meta),
                 reply_markup=build_post_keyboard(result.meta),
                 supports_streaming=True,
+                has_spoiler=result.nsfw,
             ),
             'sending redgifs',
             message,
@@ -435,20 +445,26 @@ async def send_image_result(
                 await msg.edit_text(en.UNEXPECTED_ERROR)
                 return
             await telegram_retry(
-                lambda: message.answer_animation(
-                    InputFile(BytesIO(data), filename='file.gif'),
+                lambda: message.bot.send_animation(
+                    chat_id=message.chat.id,
+                    message_thread_id=message_thread_id(message),
+                    animation=InputFile(BytesIO(data), filename='file.gif'),
                     caption=build_caption(result.meta),
                     reply_markup=build_post_keyboard(result.meta),
+                    has_spoiler=result.nsfw,
                 ),
                 'sending gif image',
                 message,
             )
         else:
             await telegram_retry(
-                lambda: message.answer_photo(
-                    result.url,
+                lambda: message.bot.send_photo(
+                    chat_id=message.chat.id,
+                    message_thread_id=message_thread_id(message),
+                    photo=result.url,
                     caption=build_caption(result.meta),
                     reply_markup=build_post_keyboard(result.meta),
+                    has_spoiler=result.nsfw,
                 ),
                 'sending image',
                 message,
@@ -486,7 +502,7 @@ async def send_gallery_result(
 
     async def build_gallery_media(item: RedditGalleryItem):
         if item.kind == 'photo':
-            return InputMediaPhoto(item.url, caption=next_caption())
+            return InputMediaPhoto(item.url, caption=next_caption(), has_spoiler=result.nsfw)
 
         if item.kind == 'document':
             return InputMediaDocument(item.url, caption=next_caption())
@@ -524,6 +540,7 @@ async def send_gallery_result(
                 InputFile(BytesIO(video_content), filename=filename),
                 caption=next_caption(),
                 supports_streaming=True,
+                has_spoiler=result.nsfw,
             )
 
         logger.warning('Skipping unknown gallery item kind=%s media_id=%s url=%s', item.kind, item.media_id, item.url)
@@ -599,17 +616,26 @@ async def send_gallery_result(
                             if isinstance(media_item, InputMediaVideo):
                                 reset_input_file(media_item.file)
                                 await telegram_retry(
-                                    lambda item=media_item: message.answer_video(
-                                        item.file or item.media,
+                                    lambda item=media_item: message.bot.send_video(
+                                        chat_id=message.chat.id,
+                                        message_thread_id=message_thread_id(message),
+                                        video=item.file or item.media,
                                         caption=item.caption,
                                         supports_streaming=True,
+                                        has_spoiler=result.nsfw,
                                     ),
                                     'sending gallery video fallback',
                                     message,
                                 )
                             else:
                                 await telegram_retry(
-                                    lambda item=media_item: message.answer_photo(item.media, caption=item.caption),
+                                    lambda item=media_item: message.bot.send_photo(
+                                        chat_id=message.chat.id,
+                                        message_thread_id=message_thread_id(message),
+                                        photo=item.media,
+                                        caption=item.caption,
+                                        has_spoiler=result.nsfw,
+                                    ),
                                     'sending gallery photo fallback',
                                     message,
                                 )
@@ -617,24 +643,39 @@ async def send_gallery_result(
                     media_item = chunk[0]
                     if isinstance(media_item, InputMediaAnimation):
                         await telegram_retry(
-                            lambda: message.answer_animation(media_item.media, caption=media_item.caption),
+                            lambda: message.bot.send_animation(
+                                chat_id=message.chat.id,
+                                message_thread_id=message_thread_id(message),
+                                animation=media_item.media,
+                                caption=media_item.caption,
+                                has_spoiler=result.nsfw,
+                            ),
                             'sending gallery animation',
                             message,
                         )
                     elif isinstance(media_item, InputMediaVideo):
                         reset_input_file(media_item.file)
                         await telegram_retry(
-                            lambda: message.answer_video(
-                                media_item.file or media_item.media,
+                            lambda: message.bot.send_video(
+                                chat_id=message.chat.id,
+                                message_thread_id=message_thread_id(message),
+                                video=media_item.file or media_item.media,
                                 caption=media_item.caption,
                                 supports_streaming=True,
+                                has_spoiler=result.nsfw,
                             ),
                             'sending gallery video',
                             message,
                         )
                     else:
                         await telegram_retry(
-                            lambda: message.answer_photo(media_item.media, caption=media_item.caption),
+                            lambda: message.bot.send_photo(
+                                chat_id=message.chat.id,
+                                message_thread_id=message_thread_id(message),
+                                photo=media_item.media,
+                                caption=media_item.caption,
+                                has_spoiler=result.nsfw,
+                            ),
                             'sending gallery photo',
                             message,
                         )
