@@ -12,6 +12,8 @@ from urllib.parse import urljoin, urlparse, urlunparse
 
 import aiohttp
 import ffmpeg
+import praw
+import prawcore
 import requests
 from aiogram import Dispatcher, types
 from aiogram.types import (
@@ -22,7 +24,7 @@ from aiogram.types import (
     InputFile,
 )
 from bs4 import BeautifulSoup
-from fake_useragent import UserAgent
+from environs import Env
 import html
 
 from tgbot.keyboards.inline import create_inline_kb
@@ -32,12 +34,17 @@ logger = logging.getLogger(__name__)
 
 users: dict = {}
 
-ua = UserAgent()
+REDDIT_USER_AGENT = os.getenv(
+    'REDDIT_USER_AGENT',
+    'python:reddit_save_video:1.0 (by u/yo_moe)'
+)
 HEADERS = {
-    'user-agent': ua.chrome,
+    'user-agent': REDDIT_USER_AGENT,
+    'accept': 'application/json',
 }
 API_URL_REDGIFS = 'https://api.redgifs.com/v1/gifs/'
 MAX_FILE_SIZE_MB = 50
+reddit_client = None
 
 
 class FFmpegError(Exception):
@@ -241,15 +248,100 @@ async def clear_url(url):
         return None
 
 
+def get_reddit_client():
+    global reddit_client
+    if reddit_client is not None:
+        return reddit_client
+
+    env = Env()
+    env.read_env()
+    client_id = env.str('REDDIT_CLIENT_ID', None)
+    client_secret = env.str('REDDIT_CLIENT_SECRET', None)
+    if not client_id or not client_secret:
+        logger.warning('Reddit API credentials are not configured')
+        return None
+
+    reddit_client = praw.Reddit(
+        client_id=client_id,
+        client_secret=client_secret,
+        user_agent=env.str('REDDIT_USER_AGENT', REDDIT_USER_AGENT),
+    )
+    reddit_client.read_only = True
+    return reddit_client
+
+
+def submission_to_listing(submission) -> list:
+    post = {
+        'title': getattr(submission, 'title', None),
+        'removed_by_category': getattr(submission, 'removed_by_category', None),
+        'thumbnail': getattr(submission, 'thumbnail', None),
+        'post_hint': getattr(submission, 'post_hint', None),
+        'media': getattr(submission, 'media', None),
+        'secure_media': getattr(submission, 'secure_media', None),
+        'preview': getattr(submission, 'preview', None),
+        'url': getattr(submission, 'url', None),
+        'url_overridden_by_dest': (
+            getattr(submission, 'url_overridden_by_dest', None)
+            or getattr(submission, 'url', '')
+        ),
+        'is_gallery': getattr(submission, 'is_gallery', False),
+        'gallery_data': getattr(submission, 'gallery_data', {}),
+        'media_metadata': getattr(submission, 'media_metadata', {}),
+        'over_18': getattr(submission, 'over_18', False),
+    }
+    crosspost_parent_list = getattr(submission, 'crosspost_parent_list', None)
+    if crosspost_parent_list:
+        post['crosspost_parent_list'] = crosspost_parent_list
+    return [{'data': {'children': [{'data': post}]}}]
+
+
+def fetch_reddit_listing_with_praw(url: str) -> list | None:
+    reddit = get_reddit_client()
+    if reddit is None:
+        return None
+
+    submission = reddit.submission(url=url)
+    submission._fetch()
+    return submission_to_listing(submission)
+
+
+async def get_reddit_listing(url: str) -> list | None:
+    try:
+        reddit_listing = await asyncio.to_thread(fetch_reddit_listing_with_praw, url)
+        if reddit_listing:
+            return reddit_listing
+    except (
+            prawcore.exceptions.PrawcoreException,
+            praw.exceptions.PRAWException,
+            requests.exceptions.RequestException,
+    ) as error:
+        logger.error('Error getting post via Reddit API: %s', error)
+
+    links_url = await clear_url(url)
+    if not links_url:
+        return None
+    try:
+        res = requests.get(
+            links_url,
+            headers=HEADERS,
+            params={'raw_json': 1},
+            timeout=10,
+        )
+        res.raise_for_status()
+        logger.debug('Response status code: %s', res.status_code)
+        return res.json()
+    except (
+            json.JSONDecodeError,
+            requests.exceptions.RequestException
+    ) as error:
+        logger.error('Error getting post json: %s', error)
+        return None
+
+
 async def get_links(url: str) -> dict:
     """Extracts video information from a Reddit URL
     and returns it as a dictionary.
     """
-    links_url = await clear_url(url)
-    res = requests.get(links_url, headers=HEADERS, timeout=10)
-    res.raise_for_status()
-    logger.debug('Response status code: %s', res.status_code)
-
     def get_find_json(res_json):
         find_json = res_json[0]['data'].get('children', [{}])[0]['data']
 
@@ -290,6 +382,10 @@ async def get_links(url: str) -> dict:
             return False
 
     async def get_video_links(fallback_url, dict_video):
+        if not fallback_url:
+            logger.error('Reddit video has no fallback_url')
+            return dict_video
+
         max_resol = fallback_url.split('_')[1].split('.')[0]
         max_resol_link = urljoin(fallback_url, urlparse(fallback_url).path)
         video_size = await size_file(max_resol_link)
@@ -305,12 +401,16 @@ async def get_links(url: str) -> dict:
         return dict_video
 
     try:
-        res_json = res.json()
+        res_json = await get_reddit_listing(url)
+        if not res_json:
+            return {}
         video_link = {}
         if is_deleted(res_json):
             return {'error': 'Deleted'}
 
-        if 'reddit_video_preview' in res.text:
+        find_json = get_find_json(res_json)
+
+        if find_json.get('preview', {}).get('reddit_video_preview'):
             find_json = get_find_json(res_json).get('preview', {}).get(
                 'reddit_video_preview', {})
 
@@ -324,7 +424,7 @@ async def get_links(url: str) -> dict:
             fallback_url = find_json.get('fallback_url')
             return await get_video_links(fallback_url, video_link)
 
-        if 'reddit_video' in res.text:
+        if get_find_json(res_json).get('secure_media', {}).get('reddit_video'):
             find_json = get_find_json(res_json).get('secure_media', {}).get(
                 'reddit_video', {})
 
@@ -738,7 +838,7 @@ async def bot_send_video_cancel(callback: CallbackQuery) -> None:
 def register_get_links(dp: Dispatcher) -> None:
     """Register handlers for get links"""
     dp.register_message_handler(
-        bot_get_links_private, regexp='https://(www\.)?reddit\.com/r/',
+        bot_get_links_private, regexp=r'https://(www\.)?reddit\.com/r/',
         chat_type=types.ChatType.PRIVATE)
     dp.register_callback_query_handler(
         bot_send_video, text_endswith='mb',
@@ -747,4 +847,4 @@ def register_get_links(dp: Dispatcher) -> None:
         bot_send_video_cancel, text_endswith='cancel',
         chat_type=types.ChatType.PRIVATE)
     dp.register_message_handler(
-        bot_get_links_group, regexp='https://(www\.)?reddit\.com/r/')
+        bot_get_links_group, regexp=r'https://(www\.)?reddit\.com/r/')
