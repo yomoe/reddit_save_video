@@ -37,12 +37,29 @@ def get_video_resolution(filename: str) -> int | None:
     return int(match.group(1))
 
 
+def normalize_permalink(permalink: str | None) -> str | None:
+    if not permalink:
+        return None
+    if permalink.startswith('/'):
+        return urljoin('https://www.reddit.com', permalink)
+    return permalink
+
+
 @dataclass(frozen=True)
 class RedditVideoVariant:
     label: str
     url: str
     resolution: int
     size_mb: float
+
+
+@dataclass(frozen=True)
+class RedditPostMeta:
+    title: str | None
+    description: str | None = None
+    subreddit: str | None = None
+    flair: str | None = None
+    permalink: str | None = None
 
 
 @dataclass
@@ -53,7 +70,7 @@ class ParsedVideoLinks:
 
 @dataclass(frozen=True)
 class RedditVideoResult:
-    caption: str | None
+    meta: RedditPostMeta
     variants: list[RedditVideoVariant]
     audio_url: str | None = None
     nsfw: bool = False
@@ -61,18 +78,19 @@ class RedditVideoResult:
 
 @dataclass(frozen=True)
 class RedditImageResult:
-    caption: str | None
+    meta: RedditPostMeta
     url: str
 
 
 @dataclass(frozen=True)
 class RedditGalleryResult:
+    meta: RedditPostMeta
     media: list[InputMediaDocument | InputMediaPhoto]
 
 
 @dataclass(frozen=True)
 class RedgifsResult:
-    caption: str | None
+    meta: RedditPostMeta
     url_id: str
 
 
@@ -241,6 +259,10 @@ def get_reddit_client():
 def submission_to_listing(submission) -> list:
     post = {
         'title': getattr(submission, 'title', None),
+        'selftext': getattr(submission, 'selftext', None),
+        'subreddit': str(getattr(submission, 'subreddit', '') or ''),
+        'link_flair_text': getattr(submission, 'link_flair_text', None),
+        'permalink': normalize_permalink(getattr(submission, 'permalink', None)),
         'removed_by_category': getattr(submission, 'removed_by_category', None),
         'thumbnail': getattr(submission, 'thumbnail', None),
         'post_hint': getattr(submission, 'post_hint', None),
@@ -317,6 +339,18 @@ async def get_links(url: str) -> RedditResult | None:
         return res_json[0]['data'].get('children', [{}])[0]['data'].get(
             'title')
 
+    def get_post_meta(res_json):
+        post = res_json[0]['data'].get('children', [{}])[0]['data']
+        find_json = get_find_json(res_json)
+        permalink = find_json.get('permalink') or post.get('permalink')
+        return RedditPostMeta(
+            title=post.get('title'),
+            description=find_json.get('selftext') or post.get('selftext'),
+            subreddit=str(find_json.get('subreddit') or post.get('subreddit') or ''),
+            flair=find_json.get('link_flair_text') or post.get('link_flair_text'),
+            permalink=normalize_permalink(permalink),
+        )
+
     def is_deleted(res_json):
         return get_find_json(res_json).get('removed_by_category') == 'deleted'
 
@@ -375,6 +409,7 @@ async def get_links(url: str) -> RedditResult | None:
             return DeletedResult()
 
         find_json = get_find_json(res_json)
+        meta = get_post_meta(res_json)
 
         preview = as_dict(find_json.get('preview'))
         if preview.get('reddit_video_preview'):
@@ -391,7 +426,7 @@ async def get_links(url: str) -> RedditResult | None:
             fallback_url = find_json.get('fallback_url')
             video_links = await add_fallback_video_link(fallback_url, video_links)
             return RedditVideoResult(
-                caption=get_caption(res_json),
+                meta=meta,
                 audio_url=video_links.audio_url,
                 variants=video_links.variants,
             )
@@ -412,7 +447,7 @@ async def get_links(url: str) -> RedditResult | None:
             fallback_url = find_json.get('fallback_url')
             video_links = await add_fallback_video_link(fallback_url, video_links)
             return RedditVideoResult(
-                caption=get_caption(res_json),
+                meta=meta,
                 audio_url=video_links.audio_url,
                 variants=video_links.variants,
                 nsfw=is_nsfw(res_json),
@@ -421,31 +456,30 @@ async def get_links(url: str) -> RedditResult | None:
         if is_image(res_json):
             image_url = res_json[0]['data'].get('children', [{}])[0][
                 'data'].get('url', '')
-            return RedditImageResult(caption=get_caption(res_json), url=image_url)
+            return RedditImageResult(meta=meta, url=image_url)
 
         if is_redgifs(res_json):
             redgifs_url = get_find_json(res_json).get('url').split('/watch/')[
                 1]
-            return RedgifsResult(caption=get_caption(res_json), url_id=redgifs_url)
+            return RedgifsResult(meta=meta, url_id=redgifs_url)
 
         if is_gallery(res_json):
             gallery_data = get_find_json(res_json).get('gallery_data', {})
             media_metadata = get_find_json(res_json).get('media_metadata', {})
             photos = []
             for i, item in enumerate(gallery_data.get('items', [])):
-                meta = media_metadata.get(item['media_id'], {})
-                media = meta.get('s', {})
+                media_meta = media_metadata.get(item['media_id'], {})
+                media = media_meta.get('s', {})
                 url = html.unescape(media.get('u') or media.get('gif') or media.get('mp4', ''))
                 if not url:
                     logger.warning('Skipping gallery item %s due to missing media fields', item.get('media_id'))
                     continue
-                caption = get_caption(res_json) if i == 0 else None
-                mime = meta.get('m', '')
+                mime = media_meta.get('m', '')
                 if 'gif' in mime:
-                    photos.append(InputMediaDocument(url, caption=caption))
+                    photos.append(InputMediaDocument(url))
                 else:
-                    photos.append(InputMediaPhoto(url, caption=caption))
-            return RedditGalleryResult(media=photos)
+                    photos.append(InputMediaPhoto(url))
+            return RedditGalleryResult(meta=get_post_meta(res_json), media=photos)
         return None
     except (
             aiohttp.ClientError,

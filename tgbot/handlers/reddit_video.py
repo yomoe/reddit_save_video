@@ -1,4 +1,6 @@
 import asyncio
+import html
+import re
 
 from aiogram.utils.exceptions import RetryAfter
 from aiogram.dispatcher import FSMContext
@@ -6,11 +8,12 @@ import logging
 import os
 import tempfile
 from io import BytesIO
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import aiohttp
 import ffmpeg
 from aiogram import Dispatcher, types
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import (
     InputMediaAnimation,
     InputMediaDocument,
@@ -23,6 +26,7 @@ from tgbot.services.reddit import (
     HEADERS,
     RedditGalleryResult,
     RedditImageResult,
+    RedditPostMeta,
     RedditVideoResult,
     RedgifsResult,
     get_links,
@@ -30,6 +34,7 @@ from tgbot.services.reddit import (
 )
 
 logger = logging.getLogger(__name__)
+CAPTION_LIMIT = 1024
 
 
 class FFmpegError(Exception):
@@ -109,6 +114,77 @@ def chunks(gallery, count):
         yield gallery[i:i + count]
 
 
+def normalize_hashtag(value: str | None) -> str | None:
+    if not value:
+        return None
+    hashtag = re.sub(r'[^\w]+', '_', value, flags=re.UNICODE).strip('_')
+    return f'#{hashtag}' if hashtag else None
+
+
+def build_hashtags(meta: RedditPostMeta) -> list[str]:
+    hashtags = []
+    subreddit = normalize_hashtag(f'r_{meta.subreddit}' if meta.subreddit else None)
+    flair = normalize_hashtag(meta.flair)
+    for hashtag in (subreddit, flair):
+        if hashtag and hashtag not in hashtags:
+            hashtags.append(hashtag)
+    return hashtags
+
+
+def fit_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    if limit <= 1:
+        return ''
+    return text[:limit - 1].rstrip() + '…'
+
+
+def build_caption(meta: RedditPostMeta, limit: int = CAPTION_LIMIT) -> str:
+    title = meta.title or 'Reddit post'
+    description = (meta.description or '').strip()
+    hashtags = ' '.join(build_hashtags(meta))
+
+    def render(title_text: str, description_text: str) -> str:
+        title_block = f'<b>{html.escape(title_text)}</b>'
+        body = html.escape(description_text) if description_text else ''
+        footer = f'\n\n{html.escape(hashtags)}' if hashtags else ''
+        if body:
+            return f'{title_block}\n\n{body}{footer}'
+        return f'{title_block}{footer}'
+
+    title_limit = min(len(title), 300)
+    description_limit = min(len(description), limit)
+    caption = render(fit_text(title, title_limit), fit_text(description, description_limit))
+
+    while len(caption) > limit and description_limit > 0:
+        overflow = len(caption) - limit
+        description_limit = max(0, description_limit - overflow - 1)
+        caption = render(fit_text(title, title_limit), fit_text(description, description_limit))
+
+    while len(caption) > limit and title_limit > 1:
+        overflow = len(caption) - limit
+        title_limit = max(1, title_limit - overflow - 1)
+        caption = render(fit_text(title, title_limit), '')
+
+    return caption
+
+
+def build_post_keyboard(meta: RedditPostMeta) -> InlineKeyboardMarkup | None:
+    if not meta.permalink:
+        return None
+
+    share_url = 'https://t.me/share/url?url={url}&text={text}'.format(
+        url=quote(meta.permalink, safe=''),
+        text=quote(meta.title or 'Reddit post', safe=''),
+    )
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton(text='Поделиться', url=share_url),
+        InlineKeyboardButton(text='Оригинал', url=meta.permalink),
+    )
+    return keyboard
+
+
 def get_best_video_link(result: RedditVideoResult) -> str:
     return max(result.variants, key=lambda variant: variant.resolution).url
 
@@ -141,7 +217,11 @@ async def send_video_result(
             message.chat.type,
             message.chat.id
         )
-        await message.answer_video(video=video_content, caption=result.caption)
+        await message.answer_video(
+            video=video_content,
+            caption=build_caption(result.meta),
+            reply_markup=build_post_keyboard(result.meta),
+        )
         await msg.delete()
 
     except FFmpegError as error:
@@ -186,7 +266,11 @@ async def send_redgifs_result(
         message.chat.type,
         message.chat.id
     )
-    await message.answer_video(video, caption=result.caption)
+    await message.answer_video(
+        video,
+        caption=build_caption(result.meta),
+        reply_markup=build_post_keyboard(result.meta),
+    )
     await msg.delete()
 
 
@@ -213,10 +297,15 @@ async def send_image_result(
                 return
             await message.answer_animation(
                 InputFile(BytesIO(data), filename='file.gif'),
-                caption=result.caption
+                caption=build_caption(result.meta),
+                reply_markup=build_post_keyboard(result.meta),
             )
         else:
-            await message.answer_photo(result.url, caption=result.caption)
+            await message.answer_photo(
+                result.url,
+                caption=build_caption(result.meta),
+                reply_markup=build_post_keyboard(result.meta),
+            )
         await msg.delete()
     except Exception as e:
         await msg.edit_text(en.UNEXPECTED_ERROR)
@@ -270,6 +359,11 @@ async def send_gallery_result(
                 logger.error(f'Unexpected error: {e}')
                 await msg.edit_text(en.UNEXPECTED_ERROR)
                 break
+    await message.answer(
+        build_caption(result.meta),
+        reply_markup=build_post_keyboard(result.meta),
+        disable_web_page_preview=True,
+    )
     await msg.delete()
 
 
