@@ -9,7 +9,6 @@ from urllib.parse import urljoin, urlparse, urlunparse
 import aiohttp
 import praw
 import prawcore
-import requests
 from aiogram.types import InputMediaDocument, InputMediaPhoto
 from bs4 import BeautifulSoup
 from environs import Env
@@ -27,6 +26,23 @@ HEADERS = {
 API_URL_REDGIFS = 'https://api.redgifs.com/v1/gifs/'
 MAX_FILE_SIZE_MB = 50
 reddit_client = None
+
+
+async def fetch_json(url: str, params: dict | None = None):
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(headers=HEADERS, timeout=timeout) as session:
+        async with session.get(url, params=params) as response:
+            response.raise_for_status()
+            logger.debug('Response status code: %s', response.status)
+            return await response.json()
+
+
+async def fetch_text(url: str) -> str:
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(headers=HEADERS, timeout=timeout) as session:
+        async with session.get(url) as response:
+            response.raise_for_status()
+            return await response.text()
 
 
 async def get_redgifs(url_id: str) -> bytes or None:
@@ -195,7 +211,6 @@ async def get_reddit_listing(url: str) -> list | None:
     except (
             prawcore.exceptions.PrawcoreException,
             praw.exceptions.PRAWException,
-            requests.exceptions.RequestException,
     ) as error:
         logger.error('Error getting post via Reddit API: %s', error)
 
@@ -203,18 +218,14 @@ async def get_reddit_listing(url: str) -> list | None:
     if not links_url:
         return None
     try:
-        res = requests.get(
+        return await fetch_json(
             links_url,
-            headers=HEADERS,
             params={'raw_json': 1},
-            timeout=10,
         )
-        res.raise_for_status()
-        logger.debug('Response status code: %s', res.status_code)
-        return res.json()
     except (
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
             json.JSONDecodeError,
-            requests.exceptions.RequestException
     ) as error:
         logger.error('Error getting post json: %s', error)
         return None
@@ -293,7 +304,7 @@ async def get_links(url: str) -> dict:
 
             dash_url = find_json.get('dash_url')
             if dash_url:
-                dash = requests.get(dash_url, headers=HEADERS, timeout=10).text
+                dash = await fetch_text(dash_url)
                 url_dl = dash_url.split('DASHPlaylist.mpd')[0]
                 video_link = await parse_xml(dash, url_dl)
 
@@ -307,7 +318,7 @@ async def get_links(url: str) -> dict:
 
             dash_url = find_json.get('dash_url')
             if dash_url:
-                dash = requests.get(dash_url, headers=HEADERS, timeout=10).text
+                dash = await fetch_text(dash_url)
                 url_dl = get_find_json(res_json).get(
                     'url_overridden_by_dest', '') + '/'
                 video_link = await parse_xml(dash, url_dl)
@@ -350,8 +361,9 @@ async def get_links(url: str) -> dict:
             return {'gallery': photos}
         return {}
     except (
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
             json.JSONDecodeError,
-            requests.exceptions.RequestException
     ) as error:
         logger.error('Error: %s', error)
         return {}
