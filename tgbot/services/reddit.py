@@ -4,6 +4,8 @@ import json
 import logging
 import os
 import re
+from dataclasses import dataclass, field
+from typing import TypeAlias
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import aiohttp
@@ -24,8 +26,68 @@ HEADERS = {
     'accept': 'application/json',
 }
 API_URL_REDGIFS = 'https://api.redgifs.com/v1/gifs/'
-MAX_FILE_SIZE_MB = 50
+MAX_FILE_SIZE_MB = 48
 reddit_client = None
+
+
+def get_video_resolution(filename: str) -> int | None:
+    match = re.search(r'_(\d+)\.', filename)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+@dataclass(frozen=True)
+class RedditVideoVariant:
+    label: str
+    url: str
+    resolution: int
+    size_mb: float
+
+
+@dataclass
+class ParsedVideoLinks:
+    audio_url: str | None = None
+    variants: list[RedditVideoVariant] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RedditVideoResult:
+    caption: str | None
+    variants: list[RedditVideoVariant]
+    audio_url: str | None = None
+    nsfw: bool = False
+
+
+@dataclass(frozen=True)
+class RedditImageResult:
+    caption: str | None
+    url: str
+
+
+@dataclass(frozen=True)
+class RedditGalleryResult:
+    media: list[InputMediaDocument | InputMediaPhoto]
+
+
+@dataclass(frozen=True)
+class RedgifsResult:
+    caption: str | None
+    url_id: str
+
+
+@dataclass(frozen=True)
+class DeletedResult:
+    pass
+
+
+RedditResult: TypeAlias = (
+    RedditVideoResult
+    | RedditImageResult
+    | RedditGalleryResult
+    | RedgifsResult
+    | DeletedResult
+)
 
 
 async def fetch_json(url: str, params: dict | None = None):
@@ -85,9 +147,9 @@ async def size_file(url: str) -> float:
         return 0.0
 
 
-async def parse_xml(xml: str, url: str) -> dict:
+async def parse_xml(xml: str, url: str) -> ParsedVideoLinks:
     """Find video and audio links from Reddit DASH XML."""
-    video_links = {'audio': 'false'}
+    video_links = ParsedVideoLinks()
     logger.debug('Get xml %s', xml)
     soup = BeautifulSoup(xml, 'xml')
 
@@ -105,19 +167,27 @@ async def parse_xml(xml: str, url: str) -> dict:
 
         if audio_bandwidth > 0:
             audio = url + base_url
-            video_links['audio'] = audio
+            video_links.audio_url = audio
             audio_size = await size_file(audio)
 
     for adaptation_set in soup.find_all('AdaptationSet', {'contentType': 'video'}):
         videos = [x.text for x in adaptation_set.find_all('BaseURL')]
         for video in videos:
-            resolution = video.split('_')[1].split('.')[0]
+            resolution = get_video_resolution(video)
+            if resolution is None:
+                logger.warning('Skipping video with unknown resolution: %s', video)
+                continue
             link = url + video
             video_size = await size_file(link)
             total_size = video_size + audio_size
             logger.debug('Video size: %s MB, total with audio: %s MB', video_size, total_size)
             if total_size < MAX_FILE_SIZE_MB:
-                video_links[f'{resolution}p {total_size:.1f}mb'] = link
+                video_links.variants.append(RedditVideoVariant(
+                    label=f'{resolution}p {total_size:.1f}mb',
+                    url=link,
+                    resolution=resolution,
+                    size_mb=total_size,
+                ))
 
     logger.debug(video_links)
     return video_links
@@ -231,7 +301,7 @@ async def get_reddit_listing(url: str) -> list | None:
         return None
 
 
-async def get_links(url: str) -> dict:
+async def get_links(url: str) -> RedditResult | None:
     """Extract video information from a Reddit URL."""
     def as_dict(value):
         return value if isinstance(value, dict) else {}
@@ -269,32 +339,40 @@ async def get_links(url: str) -> dict:
         except AttributeError:
             return False
 
-    async def get_video_links(fallback_url, dict_video):
+    async def add_fallback_video_link(fallback_url, parsed_video: ParsedVideoLinks):
         if not fallback_url:
             logger.error('Reddit video has no fallback_url')
-            return dict_video
+            return parsed_video
 
-        max_resol = fallback_url.split('_')[1].split('.')[0]
+        max_resol = get_video_resolution(fallback_url)
+        if max_resol is None:
+            logger.warning('Skipping fallback video with unknown resolution: %s', fallback_url)
+            return parsed_video
+
         max_resol_link = urljoin(fallback_url, urlparse(fallback_url).path)
         video_size = await size_file(max_resol_link)
         audio_size = 0.0
-        audio_link = dict_video.get('audio')
+        audio_link = parsed_video.audio_url
         if audio_link and audio_link != 'false':
             audio_size = await size_file(audio_link)
         total_size = video_size + audio_size
         logger.debug('Video size: %s MB, total with audio: %s MB', video_size, total_size)
         if total_size < MAX_FILE_SIZE_MB:
-            dict_video[f'{max_resol}p {total_size:.1f}mb'] = max_resol_link
-        logger.debug(dict_video)
-        return dict_video
+            parsed_video.variants.append(RedditVideoVariant(
+                label=f'{max_resol}p {total_size:.1f}mb',
+                url=max_resol_link,
+                resolution=max_resol,
+                size_mb=total_size,
+            ))
+        logger.debug(parsed_video)
+        return parsed_video
 
     try:
         res_json = await get_reddit_listing(url)
         if not res_json:
-            return {}
-        video_link = {}
+            return None
         if is_deleted(res_json):
-            return {'error': 'Deleted'}
+            return DeletedResult()
 
         find_json = get_find_json(res_json)
 
@@ -306,11 +384,17 @@ async def get_links(url: str) -> dict:
             if dash_url:
                 dash = await fetch_text(dash_url)
                 url_dl = dash_url.split('DASHPlaylist.mpd')[0]
-                video_link = await parse_xml(dash, url_dl)
+                video_links = await parse_xml(dash, url_dl)
+            else:
+                video_links = ParsedVideoLinks()
 
-            video_link['caption'] = get_caption(res_json)
             fallback_url = find_json.get('fallback_url')
-            return await get_video_links(fallback_url, video_link)
+            video_links = await add_fallback_video_link(fallback_url, video_links)
+            return RedditVideoResult(
+                caption=get_caption(res_json),
+                audio_url=video_links.audio_url,
+                variants=video_links.variants,
+            )
 
         secure_media = as_dict(get_find_json(res_json).get('secure_media'))
         if secure_media.get('reddit_video'):
@@ -321,25 +405,28 @@ async def get_links(url: str) -> dict:
                 dash = await fetch_text(dash_url)
                 url_dl = get_find_json(res_json).get(
                     'url_overridden_by_dest', '') + '/'
-                video_link = await parse_xml(dash, url_dl)
+                video_links = await parse_xml(dash, url_dl)
+            else:
+                video_links = ParsedVideoLinks()
 
-            video_link['caption'] = get_caption(res_json)
-            video_link['nsfw'] = is_nsfw(res_json)
             fallback_url = find_json.get('fallback_url')
-            return await get_video_links(fallback_url, video_link)
+            video_links = await add_fallback_video_link(fallback_url, video_links)
+            return RedditVideoResult(
+                caption=get_caption(res_json),
+                audio_url=video_links.audio_url,
+                variants=video_links.variants,
+                nsfw=is_nsfw(res_json),
+            )
 
         if is_image(res_json):
-            video_link['image'] = res_json[0]['data'].get('children', [{}])[0][
+            image_url = res_json[0]['data'].get('children', [{}])[0][
                 'data'].get('url', '')
-            video_link['caption'] = get_caption(res_json)
-            return video_link
+            return RedditImageResult(caption=get_caption(res_json), url=image_url)
 
         if is_redgifs(res_json):
             redgifs_url = get_find_json(res_json).get('url').split('/watch/')[
                 1]
-            video_link['redgifs'] = redgifs_url
-            video_link['caption'] = get_caption(res_json)
-            return video_link
+            return RedgifsResult(caption=get_caption(res_json), url_id=redgifs_url)
 
         if is_gallery(res_json):
             gallery_data = get_find_json(res_json).get('gallery_data', {})
@@ -358,12 +445,12 @@ async def get_links(url: str) -> dict:
                     photos.append(InputMediaDocument(url, caption=caption))
                 else:
                     photos.append(InputMediaPhoto(url, caption=caption))
-            return {'gallery': photos}
-        return {}
+            return RedditGalleryResult(media=photos)
+        return None
     except (
             aiohttp.ClientError,
             asyncio.TimeoutError,
             json.JSONDecodeError,
     ) as error:
         logger.error('Error: %s', error)
-        return {}
+        return None

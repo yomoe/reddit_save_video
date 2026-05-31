@@ -4,7 +4,6 @@ from aiogram.utils.exceptions import RetryAfter
 from aiogram.dispatcher import FSMContext
 import logging
 import os
-import re
 import tempfile
 from io import BytesIO
 from urllib.parse import urlparse
@@ -19,7 +18,16 @@ from aiogram.types import (
 )
 
 from tgbot.lexicon import lexicon_en as en
-from tgbot.services.reddit import HEADERS, get_links, get_redgifs
+from tgbot.services.reddit import (
+    DeletedResult,
+    HEADERS,
+    RedditGalleryResult,
+    RedditImageResult,
+    RedditVideoResult,
+    RedgifsResult,
+    get_links,
+    get_redgifs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,29 +109,31 @@ def chunks(gallery, count):
         yield gallery[i:i + count]
 
 
-def get_best_video_link(links: dict) -> str:
-    def get_resolution(item):
-        quality, _ = item
-        match = re.search(r'(\d+)p', quality)
-        return int(match.group(1)) if match else 0
-
-    return max(links.items(), key=get_resolution)[1]
+def get_best_video_link(result: RedditVideoResult) -> str:
+    return max(result.variants, key=lambda variant: variant.resolution).url
 
 
-def get_group_video_link(links: dict) -> str:
-    if len(links) > 1:
-        return list(links.values())[-2]
-    return list(links.values())[0]
+def get_group_video_link(result: RedditVideoResult) -> str:
+    if len(result.variants) > 1:
+        return result.variants[-2].url
+    return result.variants[0].url
 
 
-async def send_video_result(message: types.Message, msg: types.Message, links: dict, video_selector) -> None:
+async def send_video_result(
+        message: types.Message,
+        msg: types.Message,
+        result: RedditVideoResult,
+        video_selector
+) -> None:
     try:
+        if not result.variants:
+            logger.info('No video variants fit the size limit')
+            await msg.edit_text(en.VIDEO_NOT_FOUND)
+            return
+
         await msg.edit_text(text=en.DOWNLOADING_VIDEO)
-        audio_link = links.pop('audio', None)
-        caption = links.pop('caption', None)
-        links.pop('nsfw', None)
-        video_link = video_selector(links)
-        video_content = await download_video(video_link, audio_link)
+        video_link = video_selector(result)
+        video_content = await download_video(video_link, result.audio_url)
         await msg.edit_text(text=en.SENDING_VIDEO)
         logger.info(
             'Sending video for chat %s, %s id %s',
@@ -131,7 +141,7 @@ async def send_video_result(message: types.Message, msg: types.Message, links: d
             message.chat.type,
             message.chat.id
         )
-        await message.answer_video(video=video_content, caption=caption)
+        await message.answer_video(video=video_content, caption=result.caption)
         await msg.delete()
 
     except FFmpegError as error:
@@ -162,18 +172,17 @@ async def send_video_result(message: types.Message, msg: types.Message, links: d
 async def bot_get_links_private(message: types.Message, state: FSMContext) -> None:
     """Download and send the best available video."""
     msg = await message.answer(en.GET_LINKS_FOR_VIDEO)
-    links = await get_links(message.text)
-    logger.debug(links)
-    if not links:
+    result = await get_links(message.text)
+    logger.debug(result)
+    if not result:
         logger.info('The links dictionary is empty, sending an error message')
         await msg.edit_text(en.VIDEO_NOT_FOUND)
-    elif 'error' in links:
-        if links['error'] == 'Deleted':
-            logger.info('Video deleted, sending an error message')
-            await msg.edit_text(en.SOURCE_DELETED)
-    elif 'redgifs' in links:
+    elif isinstance(result, DeletedResult):
+        logger.info('Video deleted, sending an error message')
+        await msg.edit_text(en.SOURCE_DELETED)
+    elif isinstance(result, RedgifsResult):
         await msg.edit_text(en.SENDING_REDGIFS)
-        video = await get_redgifs(links['redgifs'])
+        video = await get_redgifs(result.url_id)
         if not video:
             await msg.edit_text(en.VIDEO_NOT_FOUND)
         else:
@@ -183,9 +192,9 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
                 message.from_user.full_name,
                 message.from_user.id
             )
-            await message.answer_video(video, caption=links['caption'])
+            await message.answer_video(video, caption=result.caption)
             await msg.delete()
-    elif 'image' in links:
+    elif isinstance(result, RedditImageResult):
         await msg.edit_text(en.SENDING_IMAGE)
         logger.info(
             'Send is_image to user %s (%s) id %s',
@@ -194,26 +203,26 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
             message.from_user.id
         )
         try:
-            ext = os.path.splitext(urlparse(links['image']).path)[1].lower()
+            ext = os.path.splitext(urlparse(result.url).path)[1].lower()
             if ext == '.gif':
                 try:
-                    data = await download_file(links['image'])
+                    data = await download_file(result.url)
                 except Exception as e:
                     logger.error('Failed to download gif: %s', e)
                     await msg.edit_text(en.UNEXPECTED_ERROR)
                     return
                 await message.answer_animation(
                     InputFile(BytesIO(data), filename='file.gif'),
-                    caption=links['caption']
+                    caption=result.caption
                 )
             else:
                 await message.answer_photo(
-                    links['image'], caption=links['caption'])
+                    result.url, caption=result.caption)
             await msg.delete()
         except Exception as e:
             await msg.edit_text(en.UNEXPECTED_ERROR)
             logger.error(f'Ошибка при отправке изображения: {e}')
-    elif 'gallery' in links:
+    elif isinstance(result, RedditGalleryResult):
         # await msg.edit_text(en.SENDING_GALLERY)
         logger.info(
             'Send gallery to user %s (%s) id %s',
@@ -221,7 +230,7 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
             message.from_user.full_name,
             message.from_user.id
         )
-        gallery = links['gallery']
+        gallery = result.media
         documents = [m for m in gallery if isinstance(m, InputMediaDocument)]
         media = [m for m in gallery if not isinstance(m, InputMediaDocument)]
         retry_delay = 5
@@ -260,7 +269,7 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
                     break
         await msg.delete()
     else:
-        await send_video_result(message, msg, links, get_best_video_link)
+        await send_video_result(message, msg, result, get_best_video_link)
 
 
 async def download_video(video_link: str, audio_link: str) -> bytes:
@@ -290,26 +299,25 @@ async def download_file(url: str) -> bytes:
 async def bot_get_links_group(message: types.Message) -> None:
     """Send video to a group or channel in the second-to-last quality"""
     msg = await message.answer(text=en.GET_LINKS_FOR_VIDEO)
-    links = await get_links(message.text)
-    logger.debug(links)
+    result = await get_links(message.text)
+    logger.debug(result)
     try:
         # Попытка удалить сообщение пользователя
         await message.delete()
     except Exception as e:
         # Обработка возможных исключений
         logger.error(f'Ошибка при попытке удаления сообщения пользователя: {e}')
-    if not links:
+    if not result:
         logger.info(
             'The dictionary of links is empty, sending an error message.'
         )
         await msg.edit_text(en.VIDEO_NOT_FOUND)
-    elif 'error' in links:
-        if links['error'] == 'Deleted':
-            logger.info('Video deleted, sending an error message')
-            await msg.edit_text(en.SOURCE_DELETED)
-    elif 'redgifs' in links:
+    elif isinstance(result, DeletedResult):
+        logger.info('Video deleted, sending an error message')
+        await msg.edit_text(en.SOURCE_DELETED)
+    elif isinstance(result, RedgifsResult):
         await msg.edit_text(en.SENDING_REDGIFS)
-        video = await get_redgifs(links['redgifs'])
+        video = await get_redgifs(result.url_id)
         if not video:
             await msg.edit_text(en.VIDEO_NOT_FOUND)
         else:
@@ -319,9 +327,9 @@ async def bot_get_links_group(message: types.Message) -> None:
                 message.chat.type,
                 message.chat.id
             )
-            await message.answer_video(video, caption=links['caption'])
+            await message.answer_video(video, caption=result.caption)
             await msg.delete()
-    elif 'image' in links:
+    elif isinstance(result, RedditImageResult):
         await msg.edit_text(en.SENDING_IMAGE)
         logger.info(
             'Sending image for chat %s, %s id %s',
@@ -330,26 +338,26 @@ async def bot_get_links_group(message: types.Message) -> None:
             message.chat.id
         )
         try:
-            ext = os.path.splitext(urlparse(links['image']).path)[1].lower()
+            ext = os.path.splitext(urlparse(result.url).path)[1].lower()
             if ext == '.gif':
                 try:
-                    data = await download_file(links['image'])
+                    data = await download_file(result.url)
                 except Exception as e:
                     logger.error('Failed to download gif: %s', e)
                     await msg.edit_text(en.UNEXPECTED_ERROR)
                     return
                 await message.answer_animation(
                     InputFile(BytesIO(data), filename='file.gif'),
-                    caption=links['caption']
+                    caption=result.caption
                 )
             else:
                 await message.answer_photo(
-                    links['image'], caption=links['caption'])
+                    result.url, caption=result.caption)
             await msg.delete()
         except Exception as e:
             await msg.edit_text(en.UNEXPECTED_ERROR)
             logger.error(f'Ошибка при отправке изображения: {e}')
-    elif 'gallery' in links:
+    elif isinstance(result, RedditGalleryResult):
         # await msg.edit_text(en.SENDING_GALLERY)
         logger.info(
             'Sending gallery for chat %s, %s id %s',
@@ -357,7 +365,7 @@ async def bot_get_links_group(message: types.Message) -> None:
             message.chat.type,
             message.chat.id
         )
-        gallery = links['gallery']
+        gallery = result.media
         documents = [m for m in gallery if isinstance(m, InputMediaDocument)]
         media = [m for m in gallery if not isinstance(m, InputMediaDocument)]
         retry_delay = 5
@@ -396,7 +404,7 @@ async def bot_get_links_group(message: types.Message) -> None:
                     break
         await msg.delete()
     else:
-        await send_video_result(message, msg, links, get_group_video_link)
+        await send_video_result(message, msg, result, get_group_video_link)
 
 
 def register_get_links(dp: Dispatcher) -> None:
