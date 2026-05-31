@@ -27,7 +27,6 @@ from bs4 import BeautifulSoup
 from environs import Env
 import html
 
-from tgbot.keyboards.inline import create_inline_kb
 from tgbot.lexicon import lexicon_en as en
 
 logger = logging.getLogger(__name__)
@@ -485,8 +484,17 @@ def chunks(gallery, count):
         yield gallery[i:i + count]
 
 
+def get_best_video_link(links: dict) -> str:
+    def get_resolution(item):
+        quality, _ = item
+        match = re.search(r'(\d+)p', quality)
+        return int(match.group(1)) if match else 0
+
+    return max(links.items(), key=get_resolution)[1]
+
+
 async def bot_get_links_private(message: types.Message, state: FSMContext) -> None:
-    """Send a message with buttons to download the video"""
+    """Download and send the best available video."""
     msg = await message.answer(en.GET_LINKS_FOR_VIDEO)
     links = await get_links(message.text)
     logger.debug(links)
@@ -586,20 +594,49 @@ async def bot_get_links_private(message: types.Message, state: FSMContext) -> No
                     break
         await msg.delete()
     else:
-        logger.debug('There are links, sending a message with buttons')
-        nsfw = links.pop('nsfw', None)
-        caption = links.pop('caption', None)
-        audio = links.pop('audio', None)
-        users[message.from_user.id] = {
-            'caption': caption,
-            'audio': audio,
-            'nsfw': nsfw,
-            'links': links,
-        }
-        await msg.edit_text(
-            text=en.VIDEO_QUALITY,
-            reply_markup=create_inline_kb(2, **links)
-        )
+        try:
+            await msg.edit_text(text=en.DOWNLOADING_VIDEO)
+            audio_link = links.pop('audio', None)
+            caption = links.pop('caption', None)
+            links.pop('nsfw', None)
+            video_link = get_best_video_link(links)
+            video_content = await download_video(video_link, audio_link)
+            await msg.edit_text(text=en.SENDING_VIDEO)
+            logger.info(
+                'Send video to user %s (%s) id %s',
+                message.from_user.username,
+                message.from_user.full_name,
+                message.from_user.id
+            )
+            await message.answer_video(
+                video=video_content,
+                caption=caption,
+            )
+            await msg.delete()
+
+        except FFmpegError as error:
+            logger.critical('FFmpeg error occurred: %s', error)
+            await msg.edit_text(en.FAILED_TO_PROCESS_VIDEO)
+
+        except aiohttp.ClientResponseError as error:
+            logging.critical('Failed to send video: %s', error)
+            await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
+
+        except aiohttp.ClientPayloadError as error:
+            logging.critical('Failed to send video: %s', error)
+            await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
+
+        except aiohttp.ServerDisconnectedError as error:
+            logging.critical('Failed to send video: %s', error)
+            await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
+
+        except aiohttp.ClientConnectionError as error:
+            logging.critical('Failed to send video: %s', error)
+            await msg.edit_text(en.FAILED_TO_SEND_VIDEO)
+
+        except Exception as error:
+            logging.critical('Unexpected error occurred: %s', error)
+            await msg.edit_text(en.UNEXPECTED_ERROR)
 
 
 async def download_video(video_link: str, audio_link: str) -> bytes:
