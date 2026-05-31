@@ -11,7 +11,6 @@ from urllib.parse import urljoin, urlparse, urlunparse
 import aiohttp
 import praw
 import prawcore
-from aiogram.types import InputMediaDocument, InputMediaPhoto, InputMediaVideo
 from bs4 import BeautifulSoup
 from environs import Env
 
@@ -31,6 +30,7 @@ API_URL_REDGIFS_AUTH = 'https://api.redgifs.com/v2/auth/temporary'
 MAX_FILE_SIZE_MB = 48
 reddit_client = None
 redgifs_token = None
+REDGIFS_ID_RE = re.compile(r'redgifs\.com/(?:watch|ifr)/([a-z0-9-]+)', re.IGNORECASE)
 
 
 def get_video_resolution(filename: str) -> int | None:
@@ -46,6 +46,32 @@ def normalize_permalink(permalink: str | None) -> str | None:
     if permalink.startswith('/'):
         return urljoin('https://www.reddit.com', permalink)
     return permalink
+
+
+def iter_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from iter_strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from iter_strings(item)
+
+
+def extract_redgifs_id(*values) -> str | None:
+    for value in values:
+        for text in iter_strings(value):
+            match = REDGIFS_ID_RE.search(text)
+            if match:
+                return match.group(1)
+    return None
+
+
+def normalize_redgifs_video_url(url: str, has_audio: bool | None) -> str:
+    if has_audio and '-silent.mp4' in url:
+        return url.replace('-silent.mp4', '.mp4')
+    return url
 
 
 @dataclass(frozen=True)
@@ -86,9 +112,18 @@ class RedditImageResult:
 
 
 @dataclass(frozen=True)
+class RedditGalleryItem:
+    kind: str
+    url: str
+    media_id: str | None = None
+    mime: str | None = None
+    redgifs_id: str | None = None
+
+
+@dataclass(frozen=True)
 class RedditGalleryResult:
     meta: RedditPostMeta
-    media: list[InputMediaDocument | InputMediaPhoto | InputMediaVideo]
+    media: list[RedditGalleryItem]
 
 
 @dataclass(frozen=True)
@@ -166,10 +201,11 @@ async def get_redgifs_video_url(url_id: str) -> str | None:
             else:
                 gif = redgifs_json.get('gif', {})
                 urls = gif.get('urls', {})
-                logger.info('RedGifs %s has_audio=%s', url_id, gif.get('hasAudio'))
+                has_audio = gif.get('hasAudio')
+                logger.info('RedGifs %s has_audio=%s url_keys=%s', url_id, has_audio, sorted(urls.keys()))
                 video_url = urls.get('hd') or urls.get('sd')
                 if video_url:
-                    return video_url
+                    return normalize_redgifs_video_url(video_url, has_audio)
 
     async with aiohttp.ClientSession() as session:
         try:
@@ -179,11 +215,14 @@ async def get_redgifs_video_url(url_id: str) -> str | None:
             logger.error('Error getting RedGifs v1 json from %s', url_id)
             return None
 
-    return (redgifs_json.get('gif', {}).get('urls', {}).get(
-        'hd') or redgifs_json.get('gfyItem', {}).get(
+    gif = redgifs_json.get('gif', {})
+    video_url = (gif.get('urls', {}).get('hd') or redgifs_json.get('gfyItem', {}).get(
         'content_urls', {}).get(
         'mp4', {}).get(
         'url'))
+    if not video_url:
+        return None
+    return normalize_redgifs_video_url(video_url, gif.get('hasAudio'))
 
 
 async def get_redgifs(url_id: str) -> bytes or None:
@@ -519,22 +558,54 @@ async def get_links(url: str) -> RedditResult | None:
         if is_gallery(res_json):
             gallery_data = get_find_json(res_json).get('gallery_data', {})
             media_metadata = get_find_json(res_json).get('media_metadata', {})
-            photos = []
+            gallery_items = []
             for i, item in enumerate(gallery_data.get('items', [])):
-                media_meta = media_metadata.get(item['media_id'], {})
+                media_id = item.get('media_id')
+                media_meta = media_metadata.get(media_id, {})
                 media = media_meta.get('s', {})
+                redgifs_id = extract_redgifs_id(item, media_meta)
                 url = html.unescape(media.get('mp4') or media.get('u') or media.get('gif', ''))
+                if redgifs_id:
+                    gallery_items.append(RedditGalleryItem(
+                        kind='redgifs',
+                        url=url,
+                        media_id=media_id,
+                        mime=media_meta.get('m', ''),
+                        redgifs_id=redgifs_id,
+                    ))
+                    continue
                 if not url:
-                    logger.warning('Skipping gallery item %s due to missing media fields', item.get('media_id'))
+                    logger.warning('Skipping gallery item %s due to missing media fields', media_id)
                     continue
                 mime = media_meta.get('m', '')
                 if media.get('mp4'):
-                    photos.append(InputMediaVideo(url))
+                    logger.info(
+                        'Gallery item %s is reddit mp4 preview, mime=%s url=%s',
+                        media_id,
+                        mime,
+                        url,
+                    )
+                    gallery_items.append(RedditGalleryItem(
+                        kind='video',
+                        url=url,
+                        media_id=media_id,
+                        mime=mime,
+                    ))
                 elif 'gif' in mime:
-                    photos.append(InputMediaDocument(url))
+                    gallery_items.append(RedditGalleryItem(
+                        kind='document',
+                        url=url,
+                        media_id=media_id,
+                        mime=mime,
+                    ))
                 else:
-                    photos.append(InputMediaPhoto(url))
-            return RedditGalleryResult(meta=get_post_meta(res_json), media=photos)
+                    gallery_items.append(RedditGalleryItem(
+                        kind='photo',
+                        url=url,
+                        media_id=media_id,
+                        mime=mime,
+                    ))
+            return RedditGalleryResult(meta=get_post_meta(res_json), media=gallery_items)
         return None
     except (
             aiohttp.ClientError,

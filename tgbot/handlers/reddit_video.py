@@ -19,6 +19,7 @@ from aiogram.types import (
     InputMediaAnimation,
     InputMediaDocument,
     InputFile,
+    InputMediaPhoto,
     InputMediaVideo,
 )
 
@@ -27,6 +28,7 @@ from tgbot.services.reddit import (
     DeletedResult,
     HEADERS,
     MAX_FILE_SIZE_MB,
+    RedditGalleryItem,
     RedditGalleryResult,
     RedditImageResult,
     RedditPostMeta,
@@ -397,9 +399,10 @@ async def send_redgifs_result(
     try:
         await telegram_retry(
             lambda: message.answer_video(
-                video,
+                InputFile(BytesIO(video), filename=f'{result.url_id}.mp4'),
                 caption=build_caption(result.meta),
                 reply_markup=build_post_keyboard(result.meta),
+                supports_streaming=True,
             ),
             'sending redgifs',
             message,
@@ -469,30 +472,147 @@ async def send_gallery_result(
         result.meta.permalink,
     )
     caption = build_caption(result.meta)
-    documents = [m for m in result.media if isinstance(m, InputMediaDocument)]
-    media = [m for m in result.media if not isinstance(m, InputMediaDocument)]
-    for i, media_item in enumerate(media):
-        media_item.caption = caption if i == 0 else None
-    for i, document in enumerate(documents):
-        document.caption = caption if not media and i == 0 else None
+    album: list[InputMediaPhoto | InputMediaVideo] = []
+    documents: list[InputMediaDocument] = []
+    skipped = 0
+    first_caption_added = False
+
+    def next_caption() -> str | None:
+        nonlocal first_caption_added
+        if first_caption_added:
+            return None
+        first_caption_added = True
+        return caption
+
+    async def build_gallery_media(item: RedditGalleryItem):
+        if item.kind == 'photo':
+            return InputMediaPhoto(item.url, caption=next_caption())
+
+        if item.kind == 'document':
+            return InputMediaDocument(item.url, caption=next_caption())
+
+        if item.kind in ('video', 'redgifs'):
+            if item.kind == 'redgifs':
+                if not item.redgifs_id:
+                    logger.warning('Skipping RedGifs gallery item without id: %s', item)
+                    return None
+                video_content = await get_redgifs(item.redgifs_id)
+                filename = f'{item.redgifs_id}.mp4'
+            else:
+                logger.info(
+                    'Downloading gallery video preview for %s media_id=%s url=%s',
+                    format_user(message),
+                    item.media_id,
+                    item.url,
+                )
+                video_content = await download_file(item.url)
+                filename = f'{item.media_id or "reddit-gallery"}.mp4'
+
+            if not video_content:
+                logger.warning('Skipping gallery video due to empty download: %s', item)
+                return None
+            if len(video_content) > MAX_FILE_SIZE_BYTES:
+                logger.warning(
+                    'Skipping gallery video for %s because file is too large: %.1f MB media_id=%s redgifs_id=%s',
+                    format_user(message),
+                    len(video_content) / 1024 / 1024,
+                    item.media_id,
+                    item.redgifs_id,
+                )
+                return None
+            return InputMediaVideo(
+                InputFile(BytesIO(video_content), filename=filename),
+                caption=next_caption(),
+                supports_streaming=True,
+            )
+
+        logger.warning('Skipping unknown gallery item kind=%s media_id=%s url=%s', item.kind, item.media_id, item.url)
+        return None
+
+    for item in result.media:
+        try:
+            media_item = await build_gallery_media(item)
+        except Exception as error:
+            skipped += 1
+            logger.exception(
+                'Failed to prepare gallery item for %s kind=%s media_id=%s redgifs_id=%s url=%s: %r',
+                format_user(message),
+                item.kind,
+                item.media_id,
+                item.redgifs_id,
+                item.url,
+                error,
+            )
+            continue
+
+        if media_item is None:
+            skipped += 1
+            continue
+        if isinstance(media_item, InputMediaDocument):
+            documents.append(media_item)
+        else:
+            album.append(media_item)
 
     async def send_document(document: InputMediaDocument) -> None:
-        await telegram_retry(
-            lambda: message.answer_document(document.media, caption=document.caption),
-            'sending gallery document',
-            message,
-        )
+        try:
+            await telegram_retry(
+                lambda: message.answer_document(document.media, caption=document.caption),
+                'sending gallery document',
+                message,
+            )
+        except WrongFileIdentifier:
+            logger.warning(
+                'Telegram rejected gallery document URL for %s. Downloading and uploading it instead.',
+                format_user(message),
+            )
+            document_content = await download_file(document.media)
+            await telegram_retry(
+                lambda: message.answer_document(
+                    InputFile(BytesIO(document_content), filename='reddit-gallery.gif'),
+                    caption=document.caption,
+                ),
+                'sending downloaded gallery document',
+                message,
+            )
+
+    def reset_input_file(input_file: InputFile | None) -> None:
+        if input_file and input_file.file.seekable():
+            input_file.file.seek(0)
 
     retry_delay = 5
-    for chunk in chunks(media, 10):
+    for chunk in chunks(album, 10):
         while True:
             try:
                 if len(chunk) >= 2:
-                    await telegram_retry(
-                        lambda: message.answer_media_group(chunk),
-                        'sending gallery media group',
-                        message,
-                    )
+                    try:
+                        await telegram_retry(
+                            lambda: message.answer_media_group(chunk),
+                            'sending gallery media group',
+                            message,
+                        )
+                    except WrongFileIdentifier:
+                        logger.warning(
+                            'Telegram rejected gallery media group for %s. Falling back to single media.',
+                            format_user(message),
+                        )
+                        for media_item in chunk:
+                            if isinstance(media_item, InputMediaVideo):
+                                reset_input_file(media_item.file)
+                                await telegram_retry(
+                                    lambda item=media_item: message.answer_video(
+                                        item.file or item.media,
+                                        caption=item.caption,
+                                        supports_streaming=True,
+                                    ),
+                                    'sending gallery video fallback',
+                                    message,
+                                )
+                            else:
+                                await telegram_retry(
+                                    lambda item=media_item: message.answer_photo(item.media, caption=item.caption),
+                                    'sending gallery photo fallback',
+                                    message,
+                                )
                 else:
                     media_item = chunk[0]
                     if isinstance(media_item, InputMediaAnimation):
@@ -502,8 +622,13 @@ async def send_gallery_result(
                             message,
                         )
                     elif isinstance(media_item, InputMediaVideo):
+                        reset_input_file(media_item.file)
                         await telegram_retry(
-                            lambda: message.answer_video(media_item.media, caption=media_item.caption),
+                            lambda: message.answer_video(
+                                media_item.file or media_item.media,
+                                caption=media_item.caption,
+                                supports_streaming=True,
+                            ),
                             'sending gallery video',
                             message,
                         )
@@ -550,6 +675,11 @@ async def send_gallery_result(
                 logger.exception('Unexpected gallery document error for %s: %r', format_user(message), e)
                 await safe_edit_text(msg, en.UNEXPECTED_ERROR)
                 break
+    if not album and not documents:
+        await safe_edit_text(msg, en.VIDEO_NOT_FOUND)
+        return
+    if skipped:
+        logger.warning('Skipped %s gallery items for %s source=%s', skipped, format_user(message), result.meta.permalink)
     await msg.delete()
 
 
