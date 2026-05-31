@@ -4,11 +4,13 @@ import json
 import logging
 import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from typing import TypeAlias
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import aiohttp
+import ffmpeg
 import praw
 import prawcore
 from bs4 import BeautifulSoup
@@ -68,10 +70,43 @@ def extract_redgifs_id(*values) -> str | None:
     return None
 
 
-def normalize_redgifs_video_url(url: str, has_audio: bool | None) -> str:
+@dataclass(frozen=True)
+class RedgifsVideoSource:
+    url: str
+    has_audio: bool | None = None
+
+
+def get_redgifs_video_candidates(url: str, has_audio: bool | None) -> list[str]:
+    candidates = []
     if has_audio and '-silent.mp4' in url:
-        return url.replace('-silent.mp4', '.mp4')
-    return url
+        candidates.append(url.replace('-silent.mp4', '-mobile.mp4'))
+        candidates.append(url.replace('-silent.mp4', '.mp4'))
+    candidates.append(url)
+
+    unique_candidates = []
+    for candidate in candidates:
+        if candidate not in unique_candidates:
+            unique_candidates.append(candidate)
+    return unique_candidates
+
+
+def has_audio_stream(file_data: bytes) -> bool | None:
+    tmp_file_name = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp_file:
+            tmp_file.write(file_data)
+            tmp_file_name = tmp_file.name
+        probe = ffmpeg.probe(tmp_file_name)
+        return any(stream.get('codec_type') == 'audio' for stream in probe.get('streams', []))
+    except (ffmpeg.Error, OSError) as error:
+        logger.warning('Failed to probe RedGifs audio stream: %s', error)
+        return None
+    finally:
+        if tmp_file_name:
+            try:
+                os.remove(tmp_file_name)
+            except OSError as error:
+                logger.warning('Failed to remove RedGifs probe temp file %s: %s', tmp_file_name, error)
 
 
 @dataclass(frozen=True)
@@ -183,6 +218,11 @@ async def get_redgifs_token() -> str | None:
 
 
 async def get_redgifs_video_url(url_id: str) -> str | None:
+    video_sources = await get_redgifs_video_sources(url_id)
+    return video_sources[0].url if video_sources else None
+
+
+async def get_redgifs_video_sources(url_id: str) -> list[RedgifsVideoSource]:
     global redgifs_token
     token = await get_redgifs_token()
     if token:
@@ -193,7 +233,7 @@ async def get_redgifs_video_url(url_id: str) -> str | None:
                 async with session.get(API_URL_REDGIFS_V2 + url_id) as response:
                     if response.status == 401:
                         redgifs_token = None
-                        return await get_redgifs_video_url(url_id)
+                        return await get_redgifs_video_sources(url_id)
                     response.raise_for_status()
                     redgifs_json = await response.json()
             except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError) as error:
@@ -205,7 +245,10 @@ async def get_redgifs_video_url(url_id: str) -> str | None:
                 logger.info('RedGifs %s has_audio=%s url_keys=%s', url_id, has_audio, sorted(urls.keys()))
                 video_url = urls.get('hd') or urls.get('sd')
                 if video_url:
-                    return normalize_redgifs_video_url(video_url, has_audio)
+                    return [
+                        RedgifsVideoSource(candidate, has_audio)
+                        for candidate in get_redgifs_video_candidates(video_url, has_audio)
+                    ]
 
     async with aiohttp.ClientSession() as session:
         try:
@@ -213,7 +256,7 @@ async def get_redgifs_video_url(url_id: str) -> str | None:
                 redgifs_json = await response.json()
         except (aiohttp.ClientError, json.JSONDecodeError):
             logger.error('Error getting RedGifs v1 json from %s', url_id)
-            return None
+            return []
 
     gif = redgifs_json.get('gif', {})
     video_url = (gif.get('urls', {}).get('hd') or redgifs_json.get('gfyItem', {}).get(
@@ -221,23 +264,44 @@ async def get_redgifs_video_url(url_id: str) -> str | None:
         'mp4', {}).get(
         'url'))
     if not video_url:
-        return None
-    return normalize_redgifs_video_url(video_url, gif.get('hasAudio'))
+        return []
+    return [
+        RedgifsVideoSource(candidate, gif.get('hasAudio'))
+        for candidate in get_redgifs_video_candidates(video_url, gif.get('hasAudio'))
+    ]
 
 
 async def get_redgifs(url_id: str) -> bytes or None:
     """Get the video from redgifs.com."""
-    video_url = await get_redgifs_video_url(url_id)
-    if not video_url:
+    video_sources = await get_redgifs_video_sources(url_id)
+    if not video_sources:
         return None
     async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(video_url) as video:
-                file_data = await video.read()
-        except aiohttp.ClientError:
-            logger.error('Error getting video from %s', url_id)
-            return None
-        return file_data
+        for source in video_sources:
+            try:
+                async with session.get(source.url) as video:
+                    video.raise_for_status()
+                    file_data = await video.read()
+            except aiohttp.ClientError as error:
+                logger.warning('Error getting RedGifs video %s from %s: %s', url_id, source.url, error)
+                continue
+
+            audio_present = has_audio_stream(file_data)
+            if source.has_audio and audio_present is False:
+                logger.warning('RedGifs %s candidate has no audio stream: %s', url_id, source.url)
+                continue
+
+            logger.info(
+                'Downloaded RedGifs %s from %s size=%.1f MB expected_audio=%s audio_stream=%s',
+                url_id,
+                source.url,
+                len(file_data) / 1024 / 1024,
+                source.has_audio,
+                audio_present,
+            )
+            return file_data
+    logger.error('No usable RedGifs video source found for %s', url_id)
+    return None
 
 
 async def size_file(url: str) -> float:
