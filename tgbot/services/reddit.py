@@ -66,7 +66,7 @@ def extract_redgifs_id(*values) -> str | None:
         for text in iter_strings(value):
             match = REDGIFS_ID_RE.search(text)
             if match:
-                return match.group(1)
+                return match.group(1).lower()
     return None
 
 
@@ -481,6 +481,17 @@ async def get_reddit_listing(url: str) -> list | None:
 
 async def get_links(url: str) -> RedditResult | None:
     """Extract video information from a Reddit URL."""
+    direct_redgifs_id = extract_redgifs_id(url)
+    if direct_redgifs_id:
+        logger.info('Detected direct RedGifs URL id=%s url=%s', direct_redgifs_id, url)
+        return RedgifsResult(
+            meta=RedditPostMeta(
+                title='RedGifs',
+                permalink=url,
+            ),
+            url_id=direct_redgifs_id,
+        )
+
     def as_dict(value):
         return value if isinstance(value, dict) else {}
 
@@ -567,8 +578,29 @@ async def get_links(url: str) -> RedditResult | None:
         find_json = get_find_json(res_json)
         meta = get_post_meta(res_json)
 
+        if is_redgifs(res_json):
+            redgifs_id = extract_redgifs_id(
+                find_json.get('url'),
+                find_json.get('url_overridden_by_dest'),
+                find_json.get('media'),
+                find_json.get('secure_media'),
+                find_json.get('media_embed'),
+                find_json.get('secure_media_embed'),
+            )
+            if not redgifs_id:
+                logger.warning('RedGifs post detected but id was not found: source=%s', meta.permalink)
+                return None
+            logger.info('Detected Reddit RedGifs post id=%s source=%s', redgifs_id, meta.permalink)
+            return RedgifsResult(meta=meta, url_id=redgifs_id)
+
         preview = as_dict(find_json.get('preview'))
         if preview.get('reddit_video_preview'):
+            logger.info(
+                'Using Reddit video preview source=%s has_audio=%s fallback_url=%s',
+                meta.permalink,
+                as_dict(preview.get('reddit_video_preview')).get('has_audio'),
+                as_dict(preview.get('reddit_video_preview')).get('fallback_url'),
+            )
             find_json = preview.get('reddit_video_preview') or {}
 
             dash_url = find_json.get('dash_url')
@@ -613,11 +645,6 @@ async def get_links(url: str) -> RedditResult | None:
             image_url = res_json[0]['data'].get('children', [{}])[0][
                 'data'].get('url', '')
             return RedditImageResult(meta=meta, url=image_url)
-
-        if is_redgifs(res_json):
-            redgifs_url = get_find_json(res_json).get('url').split('/watch/')[
-                1]
-            return RedgifsResult(meta=meta, url_id=redgifs_url)
 
         if is_gallery(res_json):
             gallery_data = get_find_json(res_json).get('gallery_data', {})

@@ -762,7 +762,9 @@ async def bot_get_links_group(message: types.Message) -> None:
 def register_get_links(dp: Dispatcher) -> None:
     """Register handlers for get links"""
     dp.register_message_handler(
-        bot_get_links_private, regexp=r'https://(www\.)?reddit\.com/r/',
+        bot_get_links_private,
+        regexp=r'https://(www\.)?(reddit\.com/r/|redgifs\.com/(watch|ifr)/)',
         chat_type=types.ChatType.PRIVATE)
     dp.register_message_handler(
-        bot_get_links_group, regexp=r'https://(www\.)?reddit\.com/r/')
+        bot_get_links_group,
+        regexp=r'https://(www\.)?(reddit\.com/r/|redgifs\.com/(watch|ifr)/)')
