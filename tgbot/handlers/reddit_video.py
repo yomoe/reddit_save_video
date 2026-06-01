@@ -14,7 +14,6 @@ import aiohttp
 import ffmpeg
 from aiogram import Dispatcher, types
 from aiogram.utils.exceptions import MessageNotModified, NetworkError, WrongFileIdentifier
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import (
     InputMediaDocument,
     InputFile,
@@ -224,15 +223,6 @@ def build_caption(meta: RedditPostMeta, limit: int = CAPTION_LIMIT) -> str:
     return caption
 
 
-def build_post_keyboard(meta: RedditPostMeta) -> InlineKeyboardMarkup | None:
-    if not meta.permalink:
-        return None
-
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(InlineKeyboardButton(text='Original', url=meta.permalink))
-    return keyboard
-
-
 async def telegram_retry(action, description: str, message: types.Message):
     retry_delay = TELEGRAM_RETRY_DELAY
     for attempt in range(1, TELEGRAM_RETRY_ATTEMPTS + 1):
@@ -344,7 +334,6 @@ async def send_video_result(
             lambda: message.answer_video(
                 video=video_content,
                 caption=build_caption(result.meta),
-                reply_markup=build_post_keyboard(result.meta),
             ),
             'sending video',
             message,
@@ -403,7 +392,6 @@ async def send_redgifs_result(
             lambda: message.answer_video(
                 InputFile(BytesIO(video), filename=f'{result.url_id}.mp4'),
                 caption=build_caption(result.meta),
-                reply_markup=build_post_keyboard(result.meta),
                 supports_streaming=True,
             ),
             'sending redgifs',
@@ -449,7 +437,6 @@ async def send_image_result(
                 lambda: message.answer_animation(
                     InputFile(BytesIO(data), filename='file.gif'),
                     caption=build_caption(result.meta),
-                    reply_markup=build_post_keyboard(result.meta),
                 ),
                 'sending gif image',
                 message,
@@ -459,7 +446,6 @@ async def send_image_result(
                 lambda: message.answer_photo(
                     result.url,
                     caption=build_caption(result.meta),
-                    reply_markup=build_post_keyboard(result.meta),
                 ),
                 'sending image',
                 message,
