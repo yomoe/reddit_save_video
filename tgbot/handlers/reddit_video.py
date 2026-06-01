@@ -16,7 +16,6 @@ from aiogram import Dispatcher, types
 from aiogram.utils.exceptions import MessageNotModified, NetworkError, WrongFileIdentifier
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import (
-    InputMediaAnimation,
     InputMediaDocument,
     InputFile,
     InputMediaPhoto,
@@ -239,7 +238,10 @@ async def telegram_retry(action, description: str, message: types.Message):
     for attempt in range(1, TELEGRAM_RETRY_ATTEMPTS + 1):
         try:
             return await action()
-        except NetworkError:
+        except NetworkError as error:
+            if 'File too large for uploading' in str(error):
+                logger.error('Telegram rejected oversized file while %s for %s', description, format_user(message))
+                raise
             if attempt == TELEGRAM_RETRY_ATTEMPTS:
                 logger.exception(
                     'Telegram network error after %s attempts while %s for %s',
@@ -434,6 +436,15 @@ async def send_image_result(
                 logger.error('Failed to download gif: %s', e)
                 await msg.edit_text(en.UNEXPECTED_ERROR)
                 return
+            if len(data) > MAX_FILE_SIZE_BYTES:
+                logger.warning(
+                    'Skipping gif image for %s because file is too large: %.1f MB source=%s',
+                    format_user(message),
+                    len(data) / 1024 / 1024,
+                    result.meta.permalink,
+                )
+                await msg.edit_text(en.VIDEO_NOT_FOUND)
+                return
             await telegram_retry(
                 lambda: message.answer_animation(
                     InputFile(BytesIO(data), filename='file.gif'),
@@ -472,7 +483,7 @@ async def send_gallery_result(
         result.meta.permalink,
     )
     caption = build_caption(result.meta)
-    album: list[InputMediaPhoto | InputMediaVideo] = []
+    album = []
     documents: list[InputMediaDocument] = []
     skipped = 0
     first_caption_added = False
@@ -486,7 +497,11 @@ async def send_gallery_result(
 
     async def build_gallery_media(item: RedditGalleryItem):
         if item.kind == 'photo':
-            return InputMediaPhoto(item.url, caption=next_caption())
+            return {
+                'kind': 'photo',
+                'media': item.url,
+                'caption': next_caption(),
+            }
 
         if item.kind == 'document':
             return InputMediaDocument(item.url, caption=next_caption())
@@ -520,11 +535,12 @@ async def send_gallery_result(
                     item.redgifs_id,
                 )
                 return None
-            return InputMediaVideo(
-                InputFile(BytesIO(video_content), filename=filename),
-                caption=next_caption(),
-                supports_streaming=True,
-            )
+            return {
+                'kind': 'video',
+                'media': video_content,
+                'filename': filename,
+                'caption': next_caption(),
+            }
 
         logger.warning('Skipping unknown gallery item kind=%s media_id=%s url=%s', item.kind, item.media_id, item.url)
         return None
@@ -575,9 +591,35 @@ async def send_gallery_result(
                 message,
             )
 
-    def reset_input_file(input_file: InputFile | None) -> None:
-        if input_file and input_file.file.seekable():
-            input_file.file.seek(0)
+    def build_album_item(media_item):
+        if media_item['kind'] == 'video':
+            return InputMediaVideo(
+                InputFile(BytesIO(media_item['media']), filename=media_item['filename']),
+                caption=media_item['caption'],
+                supports_streaming=True,
+            )
+        return InputMediaPhoto(media_item['media'], caption=media_item['caption'])
+
+    def build_album_chunk(chunk):
+        return [build_album_item(media_item) for media_item in chunk]
+
+    async def send_album_item(media_item) -> None:
+        if media_item['kind'] == 'video':
+            await telegram_retry(
+                lambda: message.answer_video(
+                    InputFile(BytesIO(media_item['media']), filename=media_item['filename']),
+                    caption=media_item['caption'],
+                    supports_streaming=True,
+                ),
+                'sending gallery video fallback',
+                message,
+            )
+        else:
+            await telegram_retry(
+                lambda: message.answer_photo(media_item['media'], caption=media_item['caption']),
+                'sending gallery photo fallback',
+                message,
+            )
 
     retry_delay = 5
     for chunk in chunks(album, 10):
@@ -586,7 +628,7 @@ async def send_gallery_result(
                 if len(chunk) >= 2:
                     try:
                         await telegram_retry(
-                            lambda: message.answer_media_group(chunk),
+                            lambda: message.answer_media_group(build_album_chunk(chunk)),
                             'sending gallery media group',
                             message,
                         )
@@ -596,48 +638,10 @@ async def send_gallery_result(
                             format_user(message),
                         )
                         for media_item in chunk:
-                            if isinstance(media_item, InputMediaVideo):
-                                reset_input_file(media_item.file)
-                                await telegram_retry(
-                                    lambda item=media_item: message.answer_video(
-                                        item.file or item.media,
-                                        caption=item.caption,
-                                        supports_streaming=True,
-                                    ),
-                                    'sending gallery video fallback',
-                                    message,
-                                )
-                            else:
-                                await telegram_retry(
-                                    lambda item=media_item: message.answer_photo(item.media, caption=item.caption),
-                                    'sending gallery photo fallback',
-                                    message,
-                                )
+                            await send_album_item(media_item)
                 else:
                     media_item = chunk[0]
-                    if isinstance(media_item, InputMediaAnimation):
-                        await telegram_retry(
-                            lambda: message.answer_animation(media_item.media, caption=media_item.caption),
-                            'sending gallery animation',
-                            message,
-                        )
-                    elif isinstance(media_item, InputMediaVideo):
-                        reset_input_file(media_item.file)
-                        await telegram_retry(
-                            lambda: message.answer_video(
-                                media_item.file or media_item.media,
-                                caption=media_item.caption,
-                                supports_streaming=True,
-                            ),
-                            'sending gallery video',
-                            message,
-                        )
-                    else:
-                        await telegram_retry(
-                            lambda: message.answer_photo(media_item.media, caption=media_item.caption),
-                            'sending gallery photo',
-                            message,
-                        )
+                    await send_album_item(media_item)
                 break
             except RetryAfter:
                 logger.info(f'Flood limit exceeded. Sleep for {retry_delay} seconds')
@@ -719,14 +723,43 @@ async def download_video(video_link: str, audio_link: str) -> bytes:
 
 async def download_file(url: str) -> bytes:
     """Download a file and return bytes."""
-    async with aiohttp.ClientSession(headers=HEADERS) as session:
-        try:
-            async with session.get(url) as response:
-                response.raise_for_status()
-                return await response.read()
-        except Exception as error:
-            logger.error('Failed to download %s: %s', url, error)
-            raise
+    retry_delay = TELEGRAM_RETRY_DELAY
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(headers=HEADERS, timeout=timeout) as session:
+        last_error = None
+        for attempt in range(1, TELEGRAM_RETRY_ATTEMPTS + 1):
+            try:
+                async with session.get(url) as response:
+                    response.raise_for_status()
+                    return await response.read()
+            except aiohttp.ClientResponseError as error:
+                last_error = error
+                if error.status < 500 or attempt == TELEGRAM_RETRY_ATTEMPTS:
+                    logger.error('Failed to download %s: %s', url, error)
+                    raise
+            except (
+                    aiohttp.ClientPayloadError,
+                    aiohttp.ServerDisconnectedError,
+                    aiohttp.ClientConnectionError,
+                    asyncio.TimeoutError,
+            ) as error:
+                last_error = error
+                if attempt == TELEGRAM_RETRY_ATTEMPTS:
+                    logger.error('Failed to download %s: %s', url, error)
+                    raise
+
+            logger.warning(
+                'Download failed for %s. Retry %s/%s in %s seconds: %s',
+                url,
+                attempt + 1,
+                TELEGRAM_RETRY_ATTEMPTS,
+                retry_delay,
+                last_error,
+            )
+            await asyncio.sleep(retry_delay)
+            retry_delay *= 2
+
+        raise RuntimeError(f'Failed to download {url}')
 
 
 async def bot_get_links_group(message: types.Message) -> None:
